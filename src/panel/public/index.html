@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orkesta Cold Calling</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <div id="login-view" class="view">
+      <div class="login-card">
+        <div class="logo">
+          <h1>Orkesta</h1>
+          <p class="tagline">AI Solutions Orchestrated</p>
+        </div>
+        <h2>Cold Calling Agent</h2>
+        <form id="login-form">
+          <input type="email" id="login-email" placeholder="Email" required>
+          <input type="password" id="login-password" placeholder="Contraseña" required>
+          <button type="submit" class="btn btn-primary">Iniciar sesión</button>
+          <p class="error-msg" id="login-error"></p>
+        </form>
+        <p class="signup-link">¿No tienes cuenta? <a href="#" id="show-signup">Regístrate</a></p>
+      </div>
+    </div>
+
+    <!-- Signup -->
+    <div id="signup-view" class="view hidden">
+      <div class="login-card">
+        <div class="logo">
+          <h1>Orkesta</h1>
+          <p class="tagline">AI Solutions Orchestrated</p>
+        </div>
+        <h2>Crear cuenta</h2>
+        <form id="signup-form">
+          <input type="text" id="signup-nombre" placeholder="Nombre completo" required>
+          <input type="email" id="signup-email" placeholder="Email" required>
+          <input type="password" id="signup-password" placeholder="Contraseña" required minlength="6">
+          <button type="submit" class="btn btn-primary">Registrarse</button>
+          <p class="error-msg" id="signup-error"></p>
+        </form>
+        <p class="signup-link"><a href="#" id="show-login">Volver al login</a></p>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard-view" class="view hidden">
+      <header>
+        <div class="header-left">
+          <h1>Orkesta <span class="subtitle">Cold Calling</span></h1>
+        </div>
+        <div class="header-right">
+          <span id="user-name"></span>
+          <button class="btn btn-small" id="logout-btn">Salir</button>
+        </div>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="prospects">Prospectos</button>
+        <button class="tab" data-tab="campaigns">Campañas</button>
+        <button class="tab" data-tab="calls">Llamadas</button>
+      </nav>
+
+      <!-- Prospects Tab -->
+      <div id="tab-prospects" class="tab-content active">
+        <div class="toolbar">
+          <h2>Prospectos</h2>
+          <button class="btn btn-primary" id="add-prospect-btn">+ Nuevo prospecto</button>
+        </div>
+        <div id="prospects-list" class="card-list"></div>
+      </div>
+
+      <!-- Campaigns Tab -->
+      <div id="tab-campaigns" class="tab-content">
+        <div class="toolbar">
+          <h2>Campañas</h2>
+          <button class="btn btn-primary" id="add-campaign-btn">+ Nueva campaña</button>
+        </div>
+        <div id="campaigns-list" class="card-list"></div>
+      </div>
+
+      <!-- Calls Tab -->
+      <div id="tab-calls" class="tab-content">
+        <div class="toolbar">
+          <h2>Historial de llamadas</h2>
+        </div>
+        <div id="calls-list" class="card-list"></div>
+      </div>
+
+      <!-- Call Detail Modal -->
+      <div id="call-detail-modal" class="modal hidden">
+        <div class="modal-content modal-large">
+          <button class="modal-close" id="close-call-detail">&times;</button>
+          <h2>Detalle de llamada</h2>
+          <div id="call-detail-content"></div>
+        </div>
+      </div>
+
+      <!-- Prospect Form Modal -->
+      <div id="prospect-modal" class="modal hidden">
+        <div class="modal-content">
+          <button class="modal-close" id="close-prospect-modal">&times;</button>
+          <h2 id="prospect-modal-title">Nuevo prospecto</h2>
+          <form id="prospect-form">
+            <input type="hidden" id="prospect-id">
+            <input type="text" id="prospect-nombre" placeholder="Nombre *" required>
+            <input type="tel" id="prospect-telefono" placeholder="Teléfono (con código de país) *" required>
+            <input type="text" id="prospect-empresa" placeholder="Empresa">
+            <input type="email" id="prospect-email" placeholder="Email">
+            <textarea id="prospect-notas" placeholder="Notas" rows="3"></textarea>
+            <button type="submit" class="btn btn-primary">Guardar</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Campaign Form Modal -->
+      <div id="campaign-modal" class="modal hidden">
+        <div class="modal-content">
+          <button class="modal-close" id="close-campaign-modal">&times;</button>
+          <h2>Nueva campaña</h2>
+          <form id="campaign-form">
+            <input type="text" id="campaign-nombre" placeholder="Nombre de la campaña *" required>
+            <textarea id="campaign-objetivo" placeholder="Objetivo de la campaña *" rows="2" required></textarea>
+            <textarea id="campaign-contexto" placeholder="Contexto del negocio *" rows="3" required></textarea>
+            <textarea id="campaign-prompt" placeholder="System prompt personalizado *" rows="5" required></textarea>
+            <button type="submit" class="btn btn-primary">Crear campaña</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Call Initiate Modal -->
+      <div id="call-modal" class="modal hidden">
+        <div class="modal-content">
+          <button class="modal-close" id="close-call-modal">&times;</button>
+          <h2>Iniciar llamada</h2>
+          <p id="call-prospect-info"></p>
+          <div class="form-group">
+            <label>Campaña (opcional)</label>
+            <select id="call-campaign-select">
+              <option value="">Sin campaña</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="start-call-btn">Llamar ahora</button>
+          <p class="error-msg" id="call-error"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
