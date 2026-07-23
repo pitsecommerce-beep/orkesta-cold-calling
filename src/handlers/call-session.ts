@@ -3,9 +3,11 @@ import { DeepgramSTT } from '../services/deepgram-stt';
 import * as tts from '../services/deepgram-tts';
 import * as openai from '../services/openai';
 import * as db from '../services/supabase';
+import * as twilio from '../services/twilio';
 import { TurnDetector, TurnCompleteEvent } from '../pipeline/turn-detector';
 import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
+import { getAmbientChunk } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus } from '../models/types';
 
@@ -31,6 +33,14 @@ export class CallSession {
   private greetingSent = false;
   private disposed = false;
   private ttsVoice: string | undefined;
+  private llmModel: string | undefined;
+
+  private ambientInterval: NodeJS.Timeout | null = null;
+  private ambientOffset = 0;
+  private silenceTimer: NodeJS.Timeout | null = null;
+  private noResponseCount = 0;
+  private static readonly SILENCE_TIMEOUT_MS = 15000;
+  private static readonly MAX_NO_RESPONSE = 2;
 
   constructor(ws: WebSocket, params: { prospectId: string; campaignId: string; ownerId: string }) {
     this.twilioWs = ws;
@@ -70,6 +80,9 @@ export class CallSession {
       if (campaign?.voz_configurada) {
         this.ttsVoice = campaign.voz_configurada;
       }
+      if (campaign?.llm_model) {
+        this.llmModel = campaign.llm_model;
+      }
 
       this.callId = await db.createCallRecord({
         prospectId: this.prospectId,
@@ -93,10 +106,71 @@ export class CallSession {
 
       await db.updateProspectStatus(this.prospectId, 'contactado');
 
-      // Send initial greeting after a short delay
+      this.startAmbientAudio();
+
       setTimeout(() => this.sendGreeting(), 1500);
     } catch (err) {
       console.error('[CallSession] Initialize error:', err);
+    }
+  }
+
+  private startAmbientAudio() {
+    if (this.ambientInterval) return;
+    this.ambientInterval = setInterval(() => {
+      if (this.disposed || !this.streamSid || this.isAgentSpeaking) return;
+      if (this.twilioWs.readyState !== WebSocket.OPEN) return;
+      const { chunk, nextOffset } = getAmbientChunk(this.ambientOffset, 200);
+      this.ambientOffset = nextOffset;
+      for (let i = 0; i < chunk.length; i += 160) {
+        const frame = chunk.subarray(i, Math.min(i + 160, chunk.length));
+        this.twilioWs.send(JSON.stringify({
+          event: 'media',
+          streamSid: this.streamSid,
+          media: { payload: frame.toString('base64') },
+        }));
+      }
+    }, 200);
+  }
+
+  private stopAmbientAudio() {
+    if (this.ambientInterval) {
+      clearInterval(this.ambientInterval);
+      this.ambientInterval = null;
+    }
+  }
+
+  private resetSilenceTimer() {
+    if (this.silenceTimer) clearTimeout(this.silenceTimer);
+    this.silenceTimer = setTimeout(() => {
+      this.handleSilenceTimeout();
+    }, CallSession.SILENCE_TIMEOUT_MS);
+  }
+
+  private async handleSilenceTimeout() {
+    if (this.disposed) return;
+    this.noResponseCount++;
+
+    if (this.noResponseCount >= CallSession.MAX_NO_RESPONSE) {
+      console.log(`[CallSession] No response after ${this.noResponseCount} attempts — hanging up`);
+      if (this.callId) {
+        await db.updateCallRecord(this.callId, { disposition: 'sin_decision' });
+      }
+      await this.hangup();
+      return;
+    }
+
+    console.log(`[CallSession] No response — attempt ${this.noResponseCount}`);
+    this.conversationHistory.push({
+      role: 'user',
+      content: '[Silencio prolongado — el prospecto no ha respondido. Di "¿Hola? ¿Me escucha?" brevemente.]',
+    });
+    await this.processLLMResponse();
+    this.resetSilenceTimer();
+  }
+
+  private async hangup() {
+    if (this.callSid) {
+      await twilio.hangupCall(this.callSid);
     }
   }
 
@@ -141,6 +215,7 @@ export class CallSession {
     });
 
     await this.processLLMResponse();
+    this.resetSilenceTimer();
   }
 
   handleMedia(payload: string) {
@@ -176,6 +251,9 @@ export class CallSession {
   private async handleTurnComplete(text: string) {
     if (this.disposed || !text.trim()) return;
 
+    this.noResponseCount = 0;
+    this.resetSilenceTimer();
+
     console.log(`[CallSession] Prospect said: "${text}"`);
 
     this.turns.push({
@@ -208,7 +286,7 @@ export class CallSession {
       let fullResponse = '';
       this.phraseChunker.reset();
 
-      const stream = openai.streamCompletion(this.conversationHistory, signal);
+      const stream = openai.streamCompletion(this.conversationHistory, signal, this.llmModel);
 
       for await (const event of stream) {
         if (signal.aborted) break;
@@ -359,6 +437,12 @@ export class CallSession {
     this.disposed = true;
 
     console.log(`[CallSession] Cleaning up call ${this.callSid}`);
+
+    this.stopAmbientAudio();
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
 
     if (this.currentAbort) {
       this.currentAbort.abort();
