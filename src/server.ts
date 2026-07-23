@@ -3,7 +3,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import path from 'path';
-import { config } from './config';
+import { config, getMissingVars, isConfigured } from './config';
 import { authRouter } from './routes/auth';
 import { prospectsRouter } from './routes/prospects';
 import { campaignsRouter } from './routes/campaigns';
@@ -21,7 +21,18 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'panel', 'public')));
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const missing = getMissingVars();
+  res.json({
+    status: missing.length === 0 ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    services: {
+      twilio: isConfigured('twilio'),
+      deepgram: isConfigured('deepgram'),
+      openai: isConfigured('openai'),
+      supabase: isConfigured('supabase'),
+    },
+    missingEnvVars: missing.length > 0 ? missing : undefined,
+  });
 });
 
 app.use('/api/auth', authRouter);
@@ -56,6 +67,20 @@ async function start() {
   console.log('  AI Solutions Orchestrated');
   console.log('===========================================');
 
+  const missing = getMissingVars();
+  if (missing.length > 0) {
+    console.warn('');
+    console.warn('⚠️  Servicios disponibles:');
+    console.warn(`   Twilio:   ${isConfigured('twilio') ? '✅' : '❌ (llamadas no funcionarán)'}`);
+    console.warn(`   Deepgram: ${isConfigured('deepgram') ? '✅' : '❌ (STT/TTS no funcionarán)'}`);
+    console.warn(`   OpenAI:   ${isConfigured('openai') ? '✅' : '❌ (conversación IA no funcionará)'}`);
+    console.warn(`   Supabase: ${isConfigured('supabase') ? '✅' : '❌ (auth y BD no funcionarán)'}`);
+    console.warn('');
+    console.warn('   El panel web seguirá cargando. Configura las variables faltantes');
+    console.warn('   para habilitar todas las funciones.');
+    console.warn('');
+  }
+
   try {
     await warmFillerCache();
   } catch (err) {
@@ -64,8 +89,12 @@ async function start() {
 
   server.listen(config.port, () => {
     console.log(`[Server] Running on port ${config.port}`);
-    console.log(`[Server] Public URL: ${config.publicBaseUrl}`);
-    console.log(`[Server] Media Stream: ${config.publicBaseUrl.replace(/^http/, 'ws')}/media-stream`);
+    if (config.publicBaseUrl) {
+      console.log(`[Server] Public URL: ${config.publicBaseUrl}`);
+      console.log(`[Server] Media Stream: ${config.publicBaseUrl.replace(/^http/, 'ws')}/media-stream`);
+    } else {
+      console.log('[Server] PUBLIC_BASE_URL no configurada — webhooks de Twilio no funcionarán');
+    }
   });
 }
 

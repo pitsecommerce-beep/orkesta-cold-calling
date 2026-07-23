@@ -1,4 +1,4 @@
-import { config } from '../config';
+import { config, isConfigured } from '../config';
 
 const FILLER_PHRASES = [
   'Claro...',
@@ -12,6 +12,10 @@ const FILLER_PHRASES = [
 const fillerCache = new Map<string, Buffer>();
 
 export async function warmFillerCache(): Promise<void> {
+  if (!isConfigured('deepgram')) {
+    console.warn('[TTS] ⚠️  DEEPGRAM_API_KEY no configurada — fillers deshabilitados');
+    return;
+  }
   console.log('[TTS] Warming filler cache...');
   const promises = FILLER_PHRASES.map(async (phrase) => {
     try {

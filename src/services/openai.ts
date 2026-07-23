@@ -1,8 +1,18 @@
 import OpenAI from 'openai';
-import { config } from '../config';
+import { config, isConfigured } from '../config';
 import type { ConversationTurn } from '../models/types';
 
-const client = new OpenAI({ apiKey: config.openai.apiKey });
+let _client: OpenAI | null = null;
+
+function getClient(): OpenAI {
+  if (!_client) {
+    if (!isConfigured('openai')) {
+      throw new Error('OpenAI no está configurado. Configura OPENAI_API_KEY.');
+    }
+    _client = new OpenAI({ apiKey: config.openai.apiKey });
+  }
+  return _client;
+}
 
 export interface StreamEvent {
   type: 'token' | 'tool_call' | 'done';
@@ -104,7 +114,7 @@ export async function* streamCompletion(
   messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string }>,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
-  const stream = await client.chat.completions.create({
+  const stream = await getClient().chat.completions.create({
     model: config.openai.model,
     messages: messages as OpenAI.ChatCompletionMessageParam[],
     tools: TOOL_DEFINITIONS,
@@ -172,7 +182,7 @@ export async function generateCallReport(turns: ConversationTurn[]): Promise<{
     .map((t) => `[${t.speaker === 'agente' ? 'Agente' : 'Prospecto'}]: ${t.text}`)
     .join('\n');
 
-  const response = await client.chat.completions.create({
+  const response = await getClient().chat.completions.create({
     model: config.openai.reportModel,
     messages: [
       {

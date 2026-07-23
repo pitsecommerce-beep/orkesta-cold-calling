@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { config } from '../config';
+import { config, isConfigured } from '../config';
 
 export interface STTCallbacks {
   onTranscript: (text: string, isFinal: boolean, speechFinal: boolean) => void;
@@ -18,6 +18,9 @@ export class DeepgramSTT {
   }
 
   connect(): Promise<void> {
+    if (!isConfigured('deepgram')) {
+      return Promise.reject(new Error('Deepgram no está configurado. Configura DEEPGRAM_API_KEY.'));
+    }
     return new Promise((resolve, reject) => {
       const url = new URL('wss://api.deepgram.com/v1/listen');
       url.searchParams.set('model', 'nova-3');
