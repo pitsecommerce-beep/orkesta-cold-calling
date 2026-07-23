@@ -134,50 +134,54 @@ ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transcripts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE call_reports ENABLE ROW LEVEL SECURITY;
 
--- Políticas: cada usuario ve solo sus datos
-CREATE POLICY profiles_own ON profiles
-  FOR ALL USING (id = auth.uid());
+-- Políticas RLS: cada usuario autenticado ve solo sus datos.
+-- El service_role key (usado por el backend) bypasea RLS automáticamente.
 
-CREATE POLICY prospects_own ON prospects
-  FOR ALL USING (owner_id = auth.uid());
+CREATE POLICY profiles_select ON profiles
+  FOR SELECT USING (id = auth.uid());
 
-CREATE POLICY campaigns_own ON campaigns
-  FOR ALL USING (owner_id = auth.uid());
+CREATE POLICY profiles_insert ON profiles
+  FOR INSERT WITH CHECK (id = auth.uid());
 
-CREATE POLICY calls_own ON calls
-  FOR ALL USING (owner_id = auth.uid());
+CREATE POLICY profiles_update ON profiles
+  FOR UPDATE USING (id = auth.uid());
 
-CREATE POLICY transcripts_own ON transcripts
-  FOR ALL USING (
+CREATE POLICY prospects_select ON prospects
+  FOR SELECT USING (owner_id = auth.uid());
+
+CREATE POLICY prospects_insert ON prospects
+  FOR INSERT WITH CHECK (owner_id = auth.uid());
+
+CREATE POLICY prospects_update ON prospects
+  FOR UPDATE USING (owner_id = auth.uid());
+
+CREATE POLICY prospects_delete ON prospects
+  FOR DELETE USING (owner_id = auth.uid());
+
+CREATE POLICY campaigns_select ON campaigns
+  FOR SELECT USING (owner_id = auth.uid());
+
+CREATE POLICY campaigns_insert ON campaigns
+  FOR INSERT WITH CHECK (owner_id = auth.uid());
+
+CREATE POLICY campaigns_update ON campaigns
+  FOR UPDATE USING (owner_id = auth.uid());
+
+CREATE POLICY calls_select ON calls
+  FOR SELECT USING (owner_id = auth.uid());
+
+CREATE POLICY calls_insert ON calls
+  FOR INSERT WITH CHECK (owner_id = auth.uid());
+
+CREATE POLICY calls_update ON calls
+  FOR UPDATE USING (owner_id = auth.uid());
+
+CREATE POLICY transcripts_select ON transcripts
+  FOR SELECT USING (
     call_id IN (SELECT id FROM calls WHERE owner_id = auth.uid())
   );
 
-CREATE POLICY call_reports_own ON call_reports
-  FOR ALL USING (
+CREATE POLICY call_reports_select ON call_reports
+  FOR SELECT USING (
     call_id IN (SELECT id FROM calls WHERE owner_id = auth.uid())
   );
-
--- Políticas para service_role (el servidor backend)
-CREATE POLICY profiles_service ON profiles
-  FOR ALL USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY prospects_service ON prospects
-  FOR ALL USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY campaigns_service ON campaigns
-  FOR ALL USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY calls_service ON calls
-  FOR ALL USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY transcripts_service ON transcripts
-  FOR ALL USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY call_reports_service ON call_reports
-  FOR ALL USING (true)
-  WITH CHECK (true);

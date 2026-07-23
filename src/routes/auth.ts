@@ -53,21 +53,31 @@ authRouter.post('/signup', async (req: Request, res: Response) => {
     });
 
     if (error) {
+      console.error('[Auth] Supabase createUser error:', error.message);
       res.status(400).json({ error: error.message });
       return;
     }
 
-    await supabaseAdmin.from('profiles').insert({
+    const { error: profileError } = await supabaseAdmin.from('profiles').insert({
       id: data.user.id,
       nombre,
       email,
       rol: 'vendedor',
     });
 
+    if (profileError) {
+      console.error('[Auth] Profile insert error:', profileError.message, profileError.details, profileError.hint);
+      res.status(500).json({
+        error: `Usuario creado en Auth pero falló el perfil: ${profileError.message}. ¿Ya ejecutaste la migración SQL en Supabase?`,
+      });
+      return;
+    }
+
     res.json({ message: 'Usuario creado', userId: data.user.id });
-  } catch (err) {
-    console.error('[Auth] Signup error:', err);
-    res.status(500).json({ error: 'Error creando usuario' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[Auth] Signup error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -103,9 +113,10 @@ authRouter.post('/login', async (req: Request, res: Response) => {
         rol: profile?.rol || 'vendedor',
       },
     });
-  } catch (err) {
-    console.error('[Auth] Login error:', err);
-    res.status(500).json({ error: 'Error de autenticación' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[Auth] Login error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
