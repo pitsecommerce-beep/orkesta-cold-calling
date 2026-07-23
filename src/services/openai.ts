@@ -89,7 +89,7 @@ ${params.prospectCompany ? `- Empresa: ${params.prospectCompany}` : ''}
 ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}`.trim();
 
   if (params.customSystemPrompt) {
-    return `${params.customSystemPrompt}\n\n${prospectBlock}`;
+    return `${params.customSystemPrompt}\n\n${prospectBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
   }
 
   return `Eres un agente de ventas profesional de Orkesta, una empresa mexicana de soluciones de inteligencia artificial. Tu slogan es "AI Solutions Orchestrated".
