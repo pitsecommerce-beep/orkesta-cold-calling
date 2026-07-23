@@ -82,7 +82,17 @@ export function buildSystemPrompt(params: {
   prospectCompany?: string;
   prospectNotes?: string;
 }): string {
-  return params.customSystemPrompt || `Eres un agente de ventas profesional de Orkesta, una empresa mexicana de soluciones de inteligencia artificial. Tu slogan es "AI Solutions Orchestrated".
+  const prospectBlock = `
+## Información del prospecto
+- Nombre: ${params.prospectName}
+${params.prospectCompany ? `- Empresa: ${params.prospectCompany}` : ''}
+${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}`.trim();
+
+  if (params.customSystemPrompt) {
+    return `${params.customSystemPrompt}\n\n${prospectBlock}`;
+  }
+
+  return `Eres un agente de ventas profesional de Orkesta, una empresa mexicana de soluciones de inteligencia artificial. Tu slogan es "AI Solutions Orchestrated".
 
 ## Tu objetivo en esta llamada
 ${params.campaignObjective}

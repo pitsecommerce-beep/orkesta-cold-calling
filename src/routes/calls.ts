@@ -40,9 +40,10 @@ callsRouter.post('/initiate', async (req: AuthenticatedRequest, res: Response) =
     });
 
     res.json({ message: 'Llamada iniciada', callSid });
-  } catch (err) {
-    console.error('[Calls] Initiate error:', err);
-    res.status(500).json({ error: 'Error iniciando llamada' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[Calls] Initiate error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -57,8 +58,9 @@ callsRouter.get('/', async (req: AuthenticatedRequest, res: Response) => {
 
     if (error) throw error;
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo llamadas' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -78,8 +80,9 @@ callsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
 
     const details = await getCallWithDetails(req.params.id as string);
     res.json(details);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo llamada' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -94,7 +97,8 @@ callsRouter.get('/prospect/:prospectId', async (req: AuthenticatedRequest, res: 
 
     if (error) throw error;
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo llamadas del prospecto' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
