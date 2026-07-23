@@ -57,6 +57,20 @@ const TOOL_DEFINITIONS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'consultar_sistema',
+      description: 'Usar cuando necesitas un momento para pensar, consultar información o formular una respuesta compleja. El prospecto escuchará que estás tecleando y buscando datos en tu sistema, como haría un vendedor real.',
+      parameters: {
+        type: 'object',
+        properties: {
+          motivo: { type: 'string', description: 'Qué estás consultando o verificando' },
+        },
+        required: ['motivo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'finalizar_llamada',
       description: 'Terminar la llamada de forma cortés',
       parameters: {
@@ -130,6 +144,8 @@ ${agentNameBlock}
 - Si logras agendar una cita, usa agendar_cita.
 - Cuando sea natural, registra el interés con registrar_interes.
 - Al despedirte, siempre usa finalizar_llamada con el resultado apropiado.
+- Cuando necesites pensar una respuesta compleja o el prospecto haga una pregunta que requiera elaboración, di algo breve como "Déjeme checarlo rápido" o "Permítame un momento" y usa consultar_sistema. El prospecto escuchará que tecleas, como un vendedor real consultando su computadora. Esto es MUCHO mejor que repetir muletillas como "entiendo", "claro", "perfecto" una y otra vez.
+- EVITA repetir la misma palabra de relleno. No digas "entiendo" más de una vez en toda la conversación. Varía: "ok", "claro", "ajá", "muy bien", "sale".
 
 ## Inicio de la conversación
 Saluda al prospecto por su nombre, preséntate brevemente en UNA frase (usando tu nombre si lo tienes asignado, o simplemente "de Orkesta" si no), y di el motivo de tu llamada de forma directa. Máximo 2 frases.`;

@@ -77,6 +77,30 @@ export function getAmbientLoop(): Buffer {
   return ambientLoop;
 }
 
+export function generateTypingBurst(durationMs: number): Buffer {
+  const samples = Math.floor(SAMPLE_RATE * durationMs / 1000);
+  const buf = Buffer.alloc(samples);
+
+  for (let i = 0; i < samples; i++) {
+    buf[i] = linearToMulaw(Math.round((Math.random() - 0.5) * 10));
+  }
+
+  let pos = rand(80, 300);
+  while (pos < samples - 100) {
+    const clickLen = rand(18, 50);
+    for (let j = 0; j < clickLen && pos + j < samples; j++) {
+      const t = j / clickLen;
+      const env = Math.sin(t * Math.PI);
+      const amp = env * rand(60, 160);
+      const sign = Math.random() < 0.5 ? 1 : -1;
+      buf[pos + j] = linearToMulaw(Math.round(sign * amp));
+    }
+    pos += rand(150, 600);
+  }
+
+  return buf;
+}
+
 export function getAmbientChunk(offset: number, lengthMs: number): { chunk: Buffer; nextOffset: number } {
   const loop = getAmbientLoop();
   const samples = Math.floor(SAMPLE_RATE * lengthMs / 1000);

@@ -7,7 +7,7 @@ import * as twilio from '../services/twilio';
 import { TurnDetector, TurnCompleteEvent } from '../pipeline/turn-detector';
 import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
-import { getAmbientChunk } from '../services/ambient-audio';
+import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus } from '../models/types';
 
@@ -379,6 +379,14 @@ export class CallSession {
     }
   }
 
+  private playTypingSounds(durationMs: number) {
+    if (!this.streamSid || this.disposed) return;
+    const typingAudio = generateTypingBurst(durationMs);
+    this.isAgentSpeaking = true;
+    this.playbackQueue.sendAudio(typingAudio, this.twilioWs, this.streamSid);
+    this.playbackQueue.sendMark(this.twilioWs, this.streamSid);
+  }
+
   private async executeToolCall(name: string, argsJson: string): Promise<string> {
     try {
       const args = JSON.parse(argsJson);
@@ -407,6 +415,12 @@ export class CallSession {
           const status = nivelMap[args.nivel] || 'contactado';
           await db.updateProspectStatus(this.prospectId, status);
           return JSON.stringify({ success: true, message: `Interés registrado: ${args.nivel}` });
+        }
+
+        case 'consultar_sistema': {
+          console.log(`[CallSession] Agent consulting: ${args.motivo}`);
+          this.playTypingSounds(3000);
+          return JSON.stringify({ success: true, message: 'Consulta realizada. Ahora responde al prospecto con la información.' });
         }
 
         case 'finalizar_llamada': {
