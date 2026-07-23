@@ -15,8 +15,9 @@ prospectsRouter.get('/', async (req: AuthenticatedRequest, res: Response) => {
 
     if (error) throw error;
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo prospectos' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -34,8 +35,9 @@ prospectsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => 
       return;
     }
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo prospecto' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -64,8 +66,9 @@ prospectsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
 
     if (error) throw error;
     res.status(201).json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error creando prospecto' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -96,8 +99,9 @@ prospectsRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => 
       return;
     }
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error actualizando prospecto' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -111,7 +115,8 @@ prospectsRouter.delete('/:id', async (req: AuthenticatedRequest, res: Response) 
 
     if (error) throw error;
     res.json({ message: 'Prospecto eliminado' });
-  } catch (err) {
-    res.status(500).json({ error: 'Error eliminando prospecto' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });

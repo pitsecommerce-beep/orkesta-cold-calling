@@ -15,8 +15,9 @@ campaignsRouter.get('/', async (req: AuthenticatedRequest, res: Response) => {
 
     if (error) throw error;
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo campañas' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -34,8 +35,9 @@ campaignsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => 
       return;
     }
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error obteniendo campaña' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -63,8 +65,9 @@ campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
 
     if (error) throw error;
     res.status(201).json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error creando campaña' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -93,7 +96,8 @@ campaignsRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => 
       return;
     }
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Error actualizando campaña' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
 });
