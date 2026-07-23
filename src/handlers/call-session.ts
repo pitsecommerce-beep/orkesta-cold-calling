@@ -75,6 +75,7 @@ export class CallSession {
 
       if (!prospect) {
         console.error('[CallSession] Prospect not found:', this.prospectId);
+        await this.hangup();
         return;
       }
 
@@ -110,7 +111,7 @@ export class CallSession {
 
       this.startAmbientAudio();
 
-      setTimeout(() => this.sendGreeting(), 1500);
+      setTimeout(() => this.sendGreeting(), 500);
     } catch (err) {
       console.error('[CallSession] Initialize error:', err);
     }
@@ -439,7 +440,8 @@ export class CallSession {
           if (args.resultado === 'pidio_no_llamar') {
             await db.updateProspectStatus(this.prospectId, 'descartado');
           }
-          return JSON.stringify({ success: true, message: 'Llamada marcada para finalizar' });
+          await this.hangup();
+          return JSON.stringify({ success: true, message: 'Llamada finalizada' });
         }
 
         default:

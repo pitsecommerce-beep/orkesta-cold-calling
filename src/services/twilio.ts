@@ -31,8 +31,6 @@ export async function initiateCall(params: {
     record: true,
     recordingStatusCallback: `${config.publicBaseUrl}/api/twilio/recording`,
     recordingStatusCallbackMethod: 'POST',
-    machineDetection: 'Enable',
-    machineDetectionTimeout: 5,
   });
 
   return call.sid;
