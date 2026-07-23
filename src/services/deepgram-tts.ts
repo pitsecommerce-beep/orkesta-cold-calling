@@ -37,8 +37,8 @@ export function getRandomFiller(): { text: string; audio: Buffer } | null {
   return { text, audio };
 }
 
-export async function synthesize(text: string, signal?: AbortSignal): Promise<Buffer> {
-  const voice = config.deepgram.ttsVoice;
+export async function synthesize(text: string, signal?: AbortSignal, voiceOverride?: string): Promise<Buffer> {
+  const voice = voiceOverride || config.deepgram.ttsVoice;
   const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=mulaw&sample_rate=8000&container=none`;
 
   const response = await fetch(url, {
@@ -64,8 +64,9 @@ export async function synthesizeStream(
   text: string,
   onChunk: (chunk: Buffer) => void,
   signal?: AbortSignal,
+  voiceOverride?: string,
 ): Promise<void> {
-  const voice = config.deepgram.ttsVoice;
+  const voice = voiceOverride || config.deepgram.ttsVoice;
   const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=mulaw&sample_rate=8000&container=none`;
 
   const response = await fetch(url, {

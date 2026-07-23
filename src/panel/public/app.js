@@ -16,6 +16,46 @@ async function api(path, options = {}) {
   return data;
 }
 
+// ---- Toast notifications ----
+function showToast(message, type = 'info', duration = 3500) {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// ---- Confirm Modal ----
+function showConfirm({ title, message, icon, confirmText, danger }) {
+  return new Promise((resolve) => {
+    document.getElementById('confirm-icon').textContent = icon || '';
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    const okBtn = document.getElementById('confirm-ok-btn');
+    okBtn.textContent = confirmText || 'Confirmar';
+    okBtn.className = danger ? 'btn btn-danger' : 'btn btn-primary';
+    okBtn.style.width = 'auto';
+    okBtn.style.minWidth = '120px';
+    document.getElementById('confirm-modal').classList.remove('hidden');
+
+    function cleanup() {
+      document.getElementById('confirm-modal').classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      document.getElementById('confirm-cancel-btn').removeEventListener('click', onCancel);
+    }
+
+    function onOk() { cleanup(); resolve(true); }
+    function onCancel() { cleanup(); resolve(false); }
+
+    okBtn.addEventListener('click', onOk);
+    document.getElementById('confirm-cancel-btn').addEventListener('click', onCancel);
+  });
+}
+
 // ---- Auth ----
 function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -27,6 +67,17 @@ function logout() {
   currentUser = null;
   localStorage.removeItem('orkesta_token');
   showView('login-view');
+}
+
+async function handleLogout() {
+  const confirmed = await showConfirm({
+    title: 'Cerrar sesión',
+    message: '¿Estás seguro de que deseas cerrar sesión?',
+    icon: '',
+    confirmText: 'Cerrar sesión',
+    danger: true,
+  });
+  if (confirmed) logout();
 }
 
 async function checkAuth() {
@@ -81,7 +132,7 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
         password: document.getElementById('signup-password').value,
       }),
     });
-    alert('Cuenta creada. Inicia sesión.');
+    showToast('Cuenta creada. Inicia sesión.', 'success');
     showView('login-view');
   } catch (err) {
     errEl.textContent = err.message;
@@ -90,7 +141,7 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
 
 document.getElementById('show-signup').addEventListener('click', (e) => { e.preventDefault(); showView('signup-view'); });
 document.getElementById('show-login').addEventListener('click', (e) => { e.preventDefault(); showView('login-view'); });
-document.getElementById('logout-btn').addEventListener('click', logout);
+document.getElementById('logout-btn').addEventListener('click', handleLogout);
 
 // ---- Tabs ----
 document.querySelectorAll('.tab').forEach(tab => {
@@ -117,13 +168,13 @@ async function loadProspects() {
 function renderProspects() {
   const list = document.getElementById('prospects-list');
   if (prospects.length === 0) {
-    list.innerHTML = '<div class="empty-state"><p>No hay prospectos aún</p><p style="font-size:0.9rem">Agrega tu primer prospecto para comenzar</p></div>';
+    list.innerHTML = '<div class="empty-state"><p>No hay prospectos aún</p><p style="font-size:0.9rem">Agrega tu primer prospecto o importa desde Excel</p></div>';
     return;
   }
   list.innerHTML = prospects.map(p => `
     <div class="card">
       <div class="card-info">
-        <h3>${esc(p.nombre)} ${p.do_not_call ? '🚫' : ''}</h3>
+        <h3>${esc(p.nombre)}</h3>
         <p>${esc(p.telefono)} ${p.empresa ? '· ' + esc(p.empresa) : ''}</p>
       </div>
       <div class="card-actions">
@@ -177,9 +228,111 @@ document.getElementById('prospect-form').addEventListener('submit', async (e) =>
       await api('/api/prospects', { method: 'POST', body: JSON.stringify(body) });
     }
     document.getElementById('prospect-modal').classList.add('hidden');
+    showToast(id ? 'Prospecto actualizado' : 'Prospecto creado', 'success');
     loadProspects();
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, 'error');
+  }
+});
+
+// ---- Excel Import/Export ----
+document.getElementById('download-template-btn').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = `/api/prospects/template`;
+  a.download = 'plantilla_prospectos.xlsx';
+  if (token) {
+    fetch(`${API}/api/prospects/template`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    .then(r => r.blob())
+    .then(blob => {
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      URL.revokeObjectURL(a.href);
+    })
+    .catch(err => showToast('Error descargando plantilla: ' + err.message, 'error'));
+  }
+});
+
+let uploadedFile = null;
+
+document.getElementById('upload-prospects-btn').addEventListener('click', () => {
+  uploadedFile = null;
+  document.getElementById('upload-file-input').value = '';
+  document.getElementById('upload-file-name').textContent = '';
+  document.getElementById('upload-error').textContent = '';
+  document.getElementById('upload-submit-btn').disabled = true;
+  document.getElementById('upload-modal').classList.remove('hidden');
+});
+
+document.getElementById('close-upload-modal').addEventListener('click', () => {
+  document.getElementById('upload-modal').classList.add('hidden');
+});
+
+document.getElementById('upload-drop-area').addEventListener('click', () => {
+  document.getElementById('upload-file-input').click();
+});
+
+document.getElementById('upload-drop-area').addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = 'var(--primary)';
+});
+
+document.getElementById('upload-drop-area').addEventListener('dragleave', (e) => {
+  e.currentTarget.style.borderColor = 'var(--border)';
+});
+
+document.getElementById('upload-drop-area').addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = 'var(--border)';
+  if (e.dataTransfer.files.length > 0) {
+    handleFileSelect(e.dataTransfer.files[0]);
+  }
+});
+
+document.getElementById('upload-file-input').addEventListener('change', (e) => {
+  if (e.target.files.length > 0) {
+    handleFileSelect(e.target.files[0]);
+  }
+});
+
+function handleFileSelect(file) {
+  if (!file.name.match(/\.xlsx?$/i)) {
+    document.getElementById('upload-error').textContent = 'Solo se aceptan archivos .xlsx';
+    return;
+  }
+  uploadedFile = file;
+  document.getElementById('upload-file-name').textContent = file.name;
+  document.getElementById('upload-error').textContent = '';
+  document.getElementById('upload-submit-btn').disabled = false;
+}
+
+document.getElementById('upload-submit-btn').addEventListener('click', async () => {
+  if (!uploadedFile) return;
+
+  const btn = document.getElementById('upload-submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  try {
+    const arrayBuffer = await uploadedFile.arrayBuffer();
+    const base64 = btoa(
+      new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+    );
+
+    const result = await api('/api/prospects/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ fileBase64: base64 }),
+    });
+
+    document.getElementById('upload-modal').classList.add('hidden');
+    showToast(`${result.created} prospectos importados`, 'success');
+    loadProspects();
+  } catch (err) {
+    document.getElementById('upload-error').textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar prospectos';
   }
 });
 
@@ -209,15 +362,33 @@ function renderCampaigns() {
       </div>
       <div class="card-actions">
         <span class="status-badge ${c.activa ? 'status-interesado' : 'status-descartado'}">${c.activa ? 'activa' : 'pausada'}</span>
+        <button class="btn btn-small" onclick="editCampaign('${c.id}')">Editar</button>
       </div>
     </div>
   `).join('');
 }
 
 document.getElementById('add-campaign-btn').addEventListener('click', () => {
+  document.getElementById('campaign-id').value = '';
   document.getElementById('campaign-form').reset();
+  document.getElementById('campaign-modal-title').textContent = 'Nueva campaña';
+  document.getElementById('campaign-submit-btn').textContent = 'Crear campaña';
   document.getElementById('campaign-modal').classList.remove('hidden');
 });
+
+window.editCampaign = function(id) {
+  const c = campaigns.find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('campaign-id').value = c.id;
+  document.getElementById('campaign-nombre').value = c.nombre;
+  document.getElementById('campaign-objetivo').value = c.objetivo;
+  document.getElementById('campaign-contexto').value = c.contexto_negocio;
+  document.getElementById('campaign-prompt').value = c.system_prompt;
+  document.getElementById('campaign-voz').value = c.voz_configurada || '';
+  document.getElementById('campaign-modal-title').textContent = 'Editar campaña';
+  document.getElementById('campaign-submit-btn').textContent = 'Guardar cambios';
+  document.getElementById('campaign-modal').classList.remove('hidden');
+};
 
 document.getElementById('close-campaign-modal').addEventListener('click', () => {
   document.getElementById('campaign-modal').classList.add('hidden');
@@ -225,20 +396,26 @@ document.getElementById('close-campaign-modal').addEventListener('click', () => 
 
 document.getElementById('campaign-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const id = document.getElementById('campaign-id').value;
+  const body = {
+    nombre: document.getElementById('campaign-nombre').value,
+    objetivo: document.getElementById('campaign-objetivo').value,
+    contexto_negocio: document.getElementById('campaign-contexto').value,
+    system_prompt: document.getElementById('campaign-prompt').value,
+    voz_configurada: document.getElementById('campaign-voz').value || null,
+  };
+
   try {
-    await api('/api/campaigns', {
-      method: 'POST',
-      body: JSON.stringify({
-        nombre: document.getElementById('campaign-nombre').value,
-        objetivo: document.getElementById('campaign-objetivo').value,
-        contexto_negocio: document.getElementById('campaign-contexto').value,
-        system_prompt: document.getElementById('campaign-prompt').value,
-      }),
-    });
+    if (id) {
+      await api(`/api/campaigns/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await api('/api/campaigns', { method: 'POST', body: JSON.stringify(body) });
+    }
     document.getElementById('campaign-modal').classList.add('hidden');
+    showToast(id ? 'Campaña actualizada' : 'Campaña creada', 'success');
     loadCampaigns();
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, 'error');
   }
 });
 
@@ -277,13 +454,16 @@ function renderCalls(calls) {
   }).join('');
 }
 
+let currentCallDetailId = null;
+
 window.viewCallDetail = async function(callId) {
   try {
+    currentCallDetailId = callId;
     const detail = await api(`/api/calls/${callId}`);
     renderCallDetail(detail);
     document.getElementById('call-detail-modal').classList.remove('hidden');
   } catch (err) {
-    alert('Error cargando detalle: ' + err.message);
+    showToast('Error cargando detalle: ' + err.message, 'error');
   }
 };
 
@@ -303,30 +483,30 @@ function renderCallDetail(detail) {
 
   if (report) {
     const interestPct = (report.nivel_interes / 5) * 100;
-    const interestColor = report.nivel_interes >= 4 ? '#00B894' : report.nivel_interes >= 3 ? '#FDCB6E' : '#E17055';
+    const interestColor = report.nivel_interes >= 4 ? 'var(--success)' : report.nivel_interes >= 3 ? 'var(--warning)' : 'var(--danger)';
 
     html += `
       <div class="report-section">
         <h3>Reporte de la llamada</h3>
         <p>${esc(report.resumen)}</p>
 
-        <h4 style="margin-top:1rem;font-size:0.9rem">Nivel de interés: ${report.nivel_interes}/5</h4>
+        <h4 style="margin-top:1rem;font-size:0.9rem;color:var(--text-secondary)">Nivel de interés: ${report.nivel_interes}/5</h4>
         <div class="interest-bar">
           <div class="interest-fill" style="width:${interestPct}%;background:${interestColor}"></div>
         </div>
 
         ${report.puntos_clave?.length ? `
-          <h4 style="margin-top:1rem;font-size:0.9rem">Puntos clave</h4>
+          <h4 style="margin-top:1rem;font-size:0.9rem;color:var(--text-secondary)">Puntos clave</h4>
           <ul>${report.puntos_clave.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
         ` : ''}
 
         ${report.objeciones_detectadas?.length ? `
-          <h4 style="margin-top:1rem;font-size:0.9rem">Objeciones detectadas</h4>
+          <h4 style="margin-top:1rem;font-size:0.9rem;color:var(--text-secondary)">Objeciones detectadas</h4>
           <ul>${report.objeciones_detectadas.map(o => `<li>${esc(o)}</li>`).join('')}</ul>
         ` : ''}
 
         ${report.recomendacion_siguiente_paso ? `
-          <h4 style="margin-top:1rem;font-size:0.9rem">Siguiente paso recomendado</h4>
+          <h4 style="margin-top:1rem;font-size:0.9rem;color:var(--text-secondary)">Siguiente paso recomendado</h4>
           <p>${esc(report.recomendacion_siguiente_paso)}</p>
         ` : ''}
       </div>
@@ -349,8 +529,35 @@ function renderCallDetail(detail) {
     html += '<div class="transcript"><h3>Transcript</h3><p style="color:var(--text-secondary)">No hay transcript disponible</p></div>';
   }
 
+  html += `
+    <div class="call-detail-actions">
+      <button class="btn btn-danger-outline" onclick="deleteCall('${call.id}')">Eliminar registro</button>
+    </div>
+  `;
+
   document.getElementById('call-detail-content').innerHTML = html;
 }
+
+window.deleteCall = async function(callId) {
+  const confirmed = await showConfirm({
+    title: 'Eliminar registro',
+    message: '¿Estás seguro de que deseas eliminar este registro de llamada? Esta acción no se puede deshacer.',
+    icon: '',
+    confirmText: 'Eliminar',
+    danger: true,
+  });
+
+  if (!confirmed) return;
+
+  try {
+    await api(`/api/calls/${callId}`, { method: 'DELETE' });
+    document.getElementById('call-detail-modal').classList.add('hidden');
+    showToast('Registro de llamada eliminado', 'success');
+    loadCalls();
+  } catch (err) {
+    showToast('Error eliminando: ' + err.message, 'error');
+  }
+};
 
 document.getElementById('close-call-detail').addEventListener('click', () => {
   document.getElementById('call-detail-modal').classList.add('hidden');
@@ -382,12 +589,12 @@ document.getElementById('start-call-btn').addEventListener('click', async () => 
 
   try {
     const campaignId = document.getElementById('call-campaign-select').value;
-    const data = await api('/api/calls/initiate', {
+    await api('/api/calls/initiate', {
       method: 'POST',
       body: JSON.stringify({ prospectId: callProspectId, campaignId: campaignId || undefined }),
     });
     document.getElementById('call-modal').classList.add('hidden');
-    alert(`Llamada iniciada (SID: ${data.callSid})`);
+    showToast('Llamada iniciada correctamente', 'success', 4000);
     setTimeout(loadCalls, 3000);
   } catch (err) {
     errEl.textContent = err.message;

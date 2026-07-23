@@ -12,7 +12,7 @@
     <div id="login-view" class="view">
       <div class="login-card">
         <div class="logo">
-          <h1>Orkesta</h1>
+          <h1>Or<span style="opacity:0.7">x</span>esta</h1>
           <p class="tagline">AI Solutions Orchestrated</p>
         </div>
         <h2>Cold Calling Agent</h2>
@@ -30,7 +30,7 @@
     <div id="signup-view" class="view hidden">
       <div class="login-card">
         <div class="logo">
-          <h1>Orkesta</h1>
+          <h1>Or<span style="opacity:0.7">x</span>esta</h1>
           <p class="tagline">AI Solutions Orchestrated</p>
         </div>
         <h2>Crear cuenta</h2>
@@ -49,7 +49,7 @@
     <div id="dashboard-view" class="view hidden">
       <header>
         <div class="header-left">
-          <h1>Orkesta <span class="subtitle">Cold Calling</span></h1>
+          <h1>Or<span style="opacity:0.6">x</span>esta <span class="subtitle">Cold Calling</span></h1>
         </div>
         <div class="header-right">
           <span id="user-name"></span>
@@ -67,7 +67,11 @@
       <div id="tab-prospects" class="tab-content active">
         <div class="toolbar">
           <h2>Prospectos</h2>
-          <button class="btn btn-primary" id="add-prospect-btn">+ Nuevo prospecto</button>
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary btn-small" id="download-template-btn" title="Descargar plantilla Excel">Plantilla Excel</button>
+            <button class="btn btn-secondary btn-small" id="upload-prospects-btn" title="Importar prospectos desde Excel">Importar Excel</button>
+            <button class="btn btn-primary" id="add-prospect-btn" style="width:auto">+ Nuevo prospecto</button>
+          </div>
         </div>
         <div id="prospects-list" class="card-list"></div>
       </div>
@@ -76,7 +80,7 @@
       <div id="tab-campaigns" class="tab-content">
         <div class="toolbar">
           <h2>Campañas</h2>
-          <button class="btn btn-primary" id="add-campaign-btn">+ Nueva campaña</button>
+          <button class="btn btn-primary" id="add-campaign-btn" style="width:auto">+ Nueva campaña</button>
         </div>
         <div id="campaigns-list" class="card-list"></div>
       </div>
@@ -119,13 +123,31 @@
       <div id="campaign-modal" class="modal hidden">
         <div class="modal-content">
           <button class="modal-close" id="close-campaign-modal">&times;</button>
-          <h2>Nueva campaña</h2>
+          <h2 id="campaign-modal-title">Nueva campaña</h2>
           <form id="campaign-form">
+            <input type="hidden" id="campaign-id">
             <input type="text" id="campaign-nombre" placeholder="Nombre de la campaña *" required>
             <textarea id="campaign-objetivo" placeholder="Objetivo de la campaña *" rows="2" required></textarea>
             <textarea id="campaign-contexto" placeholder="Contexto del negocio *" rows="3" required></textarea>
             <textarea id="campaign-prompt" placeholder="System prompt personalizado *" rows="5" required></textarea>
-            <button type="submit" class="btn btn-primary">Crear campaña</button>
+            <div class="form-group">
+              <label>Voz del agente</label>
+              <select id="campaign-voz">
+                <option value="">Predeterminada</option>
+                <option value="aura-2-andromeda-es">Andromeda (femenina)</option>
+                <option value="aura-2-diana-es">Diana (femenina)</option>
+                <option value="aura-2-helena-es">Helena (femenina)</option>
+                <option value="aura-2-thalia-es">Thalia (femenina)</option>
+                <option value="aura-2-celeste-es">Celeste (femenina, colombiana)</option>
+                <option value="aura-2-selena-es">Selena (femenina)</option>
+                <option value="aura-2-orpheus-es">Orpheus (masculina)</option>
+                <option value="aura-2-arcas-es">Arcas (masculina)</option>
+                <option value="aura-2-perseus-es">Perseus (masculina)</option>
+                <option value="aura-2-nestor-es">Nestor (masculina, peninsular)</option>
+                <option value="aura-2-javier-es">Javier (masculina)</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary" id="campaign-submit-btn">Crear campaña</button>
           </form>
         </div>
       </div>
@@ -146,8 +168,46 @@
           <p class="error-msg" id="call-error"></p>
         </div>
       </div>
+
+      <!-- Upload Prospects Modal -->
+      <div id="upload-modal" class="modal hidden">
+        <div class="modal-content">
+          <button class="modal-close" id="close-upload-modal">&times;</button>
+          <h2>Importar prospectos</h2>
+          <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:1rem">
+            Sube un archivo Excel (.xlsx) con las columnas: <strong>nombre</strong>, <strong>telefono</strong>, <strong>empresa</strong>, <strong>notas</strong>
+          </p>
+          <div class="upload-area" id="upload-drop-area">
+            <span class="upload-icon">&#128196;</span>
+            <p>Haz clic o arrastra tu archivo aquí</p>
+            <p class="upload-hint">.xlsx</p>
+          </div>
+          <input type="file" id="upload-file-input" accept=".xlsx,.xls" style="display:none">
+          <p id="upload-file-name" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem"></p>
+          <button class="btn btn-primary" id="upload-submit-btn" disabled>Importar prospectos</button>
+          <p class="error-msg" id="upload-error"></p>
+        </div>
+      </div>
+
+      <!-- Confirm Modal (reusable) -->
+      <div id="confirm-modal" class="modal hidden">
+        <div class="modal-content" style="max-width:400px">
+          <div class="confirm-modal-body">
+            <span class="confirm-icon" id="confirm-icon"></span>
+            <h2 id="confirm-title"></h2>
+            <p id="confirm-message"></p>
+            <div class="confirm-actions">
+              <button class="btn btn-secondary" id="confirm-cancel-btn">Cancelar</button>
+              <button class="btn btn-danger" id="confirm-ok-btn">Confirmar</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
 
   <script src="/app.js"></script>
 </body>
