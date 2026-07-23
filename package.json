@@ -10,7 +10,7 @@
     "migrate": "tsx src/scripts/migrate.ts"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@deepgram/sdk": "^3.9.0",
