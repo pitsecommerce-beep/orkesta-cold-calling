@@ -30,6 +30,7 @@ export class CallSession {
   private startTime: Date;
   private greetingSent = false;
   private disposed = false;
+  private ttsVoice: string | undefined;
 
   constructor(ws: WebSocket, params: { prospectId: string; campaignId: string; ownerId: string }) {
     this.twilioWs = ws;
@@ -64,6 +65,10 @@ export class CallSession {
       if (!prospect) {
         console.error('[CallSession] Prospect not found:', this.prospectId);
         return;
+      }
+
+      if (campaign?.voz_configurada) {
+        this.ttsVoice = campaign.voz_configurada;
       }
 
       this.callId = await db.createCallRecord({
@@ -279,6 +284,7 @@ export class CallSession {
           }
         },
         signal,
+        this.ttsVoice,
       );
 
       if (!signal.aborted && this.streamSid) {

@@ -4,7 +4,7 @@ export class PhraseChunker {
   private readonly minChunkChars: number;
   private readonly splitPattern = /([.!?,;:…])\s/;
 
-  constructor(maxChunkChars = 80, minChunkChars = 15) {
+  constructor(maxChunkChars = 150, minChunkChars = 30) {
     this.maxChunkChars = maxChunkChars;
     this.minChunkChars = minChunkChars;
   }

@@ -86,6 +86,34 @@ callsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+callsRouter.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { data: call, error: findError } = await supabaseAdmin
+      .from('calls')
+      .select('id')
+      .eq('id', req.params.id)
+      .eq('owner_id', req.userId!)
+      .single();
+
+    if (findError || !call) {
+      res.status(404).json({ error: 'Llamada no encontrada' });
+      return;
+    }
+
+    const { error } = await supabaseAdmin
+      .from('calls')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('owner_id', req.userId!);
+
+    if (error) throw error;
+    res.json({ message: 'Llamada eliminada' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
 callsRouter.get('/prospect/:prospectId', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { data, error } = await supabaseAdmin
