@@ -386,6 +386,7 @@ window.editCampaign = function(id) {
   document.getElementById('campaign-prompt').value = c.system_prompt;
   document.getElementById('campaign-voz').value = c.voz_configurada || '';
   document.getElementById('campaign-llm-model').value = c.llm_model || '';
+  document.getElementById('campaign-nombre-agente').value = c.nombre_agente || '';
   document.getElementById('campaign-modal-title').textContent = 'Editar campaña';
   document.getElementById('campaign-submit-btn').textContent = 'Guardar cambios';
   document.getElementById('campaign-modal').classList.remove('hidden');
@@ -428,6 +429,7 @@ document.getElementById('campaign-form').addEventListener('submit', async (e) =>
     system_prompt: document.getElementById('campaign-prompt').value,
     voz_configurada: document.getElementById('campaign-voz').value || null,
     llm_model: document.getElementById('campaign-llm-model').value || null,
+    nombre_agente: document.getElementById('campaign-nombre-agente').value || null,
   };
 
   try {

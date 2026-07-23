@@ -35,6 +35,7 @@ export class CallSession {
   private ttsVoice: string | undefined;
   private llmModel: string | undefined;
 
+  private processingResponse = false;
   private ambientInterval: NodeJS.Timeout | null = null;
   private ambientOffset = 0;
   private silenceTimer: NodeJS.Timeout | null = null;
@@ -98,6 +99,7 @@ export class CallSession {
         prospectName: prospect.nombre,
         prospectCompany: prospect.empresa || undefined,
         prospectNotes: prospect.notas || undefined,
+        agentName: campaign?.nombre_agente || undefined,
       });
 
       this.conversationHistory.push({ role: 'system', content: systemPrompt });
@@ -117,7 +119,7 @@ export class CallSession {
   private startAmbientAudio() {
     if (this.ambientInterval) return;
     this.ambientInterval = setInterval(() => {
-      if (this.disposed || !this.streamSid || this.isAgentSpeaking) return;
+      if (this.disposed || !this.streamSid || this.isAgentSpeaking || this.processingResponse) return;
       if (this.twilioWs.readyState !== WebSocket.OPEN) return;
       const { chunk, nextOffset } = getAmbientChunk(this.ambientOffset, 200);
       this.ambientOffset = nextOffset;
@@ -279,6 +281,7 @@ export class CallSession {
   private async processLLMResponse() {
     if (this.disposed || !this.streamSid) return;
 
+    this.processingResponse = true;
     this.currentAbort = new AbortController();
     const signal = this.currentAbort.signal;
 
@@ -346,6 +349,8 @@ export class CallSession {
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       console.error('[CallSession] LLM response error:', err);
+    } finally {
+      this.processingResponse = false;
     }
   }
 

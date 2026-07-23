@@ -36,35 +36,35 @@ function generateLoop(): Buffer {
   const buf = Buffer.alloc(total);
 
   for (let i = 0; i < total; i++) {
-    const noise = (Math.random() - 0.5) * 30;
+    const noise = (Math.random() - 0.5) * 8;
     buf[i] = linearToMulaw(Math.round(noise));
   }
 
-  let pos = rand(1200, 3200);
+  let pos = rand(2000, 5000);
   while (pos < total - 200) {
-    const clickLen = rand(24, 72);
+    const clickLen = rand(16, 48);
     for (let j = 0; j < clickLen && pos + j < total; j++) {
       const t = j / clickLen;
       const env = Math.sin(t * Math.PI);
-      const amp = env * rand(150, 450);
+      const amp = env * rand(30, 80);
       const sign = Math.random() < 0.5 ? 1 : -1;
       buf[pos + j] = linearToMulaw(Math.round(sign * amp));
     }
-    pos += rand(600, 4000);
+    pos += rand(2000, 6000);
   }
 
-  let murmurPos = rand(8000, 16000);
+  let murmurPos = rand(10000, 20000);
   while (murmurPos < total - 2400) {
-    const murmurLen = rand(800, 2400);
+    const murmurLen = rand(600, 1600);
     for (let j = 0; j < murmurLen && murmurPos + j < total; j++) {
       const t = j / murmurLen;
-      const env = Math.sin(t * Math.PI) * 0.6;
+      const env = Math.sin(t * Math.PI) * 0.4;
       const freq = 0.02 + Math.random() * 0.01;
       const wave = Math.sin(j * freq) * env;
-      const amp = wave * rand(60, 180);
+      const amp = wave * rand(12, 35);
       buf[murmurPos + j] = linearToMulaw(Math.round(amp));
     }
-    murmurPos += rand(16000, 24000);
+    murmurPos += rand(20000, 28000);
   }
 
   return buf;

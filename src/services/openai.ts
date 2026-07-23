@@ -81,7 +81,12 @@ export function buildSystemPrompt(params: {
   prospectName: string;
   prospectCompany?: string;
   prospectNotes?: string;
+  agentName?: string;
 }): string {
+  const agentNameBlock = params.agentName
+    ? `\n## Tu identidad\n- Tu nombre es ${params.agentName}. Preséntate siempre con ese nombre.\n- NUNCA inventes otro nombre.`
+    : `\n## Tu identidad\n- NO uses ningún nombre propio al presentarte. Di simplemente "le habla de Orkesta" o "le llamo de Orkesta".\n- NUNCA inventes un nombre personal como "Arturo", "Carlos", etc.`;
+
   const prospectBlock = `
 ## Información del prospecto
 - Nombre: ${params.prospectName}
@@ -89,7 +94,7 @@ ${params.prospectCompany ? `- Empresa: ${params.prospectCompany}` : ''}
 ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}`.trim();
 
   if (params.customSystemPrompt) {
-    return `${params.customSystemPrompt}\n\n${prospectBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
+    return `${params.customSystemPrompt}\n\n${agentNameBlock}\n\n${prospectBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
   }
 
   return `Eres un agente de ventas profesional de Orkesta, una empresa mexicana de soluciones de inteligencia artificial. Tu slogan es "AI Solutions Orchestrated".
@@ -104,6 +109,7 @@ ${params.businessContext}
 - Nombre: ${params.prospectName}
 ${params.prospectCompany ? `- Empresa: ${params.prospectCompany}` : ''}
 ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}
+${agentNameBlock}
 
 ## Estilo de habla — suena como una persona real
 - Habla en español mexicano natural. Usa "usted" pero con tono cálido, como un vendedor amigable.
@@ -126,7 +132,7 @@ ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}
 - Al despedirte, siempre usa finalizar_llamada con el resultado apropiado.
 
 ## Inicio de la conversación
-Saluda al prospecto por su nombre, preséntate brevemente en UNA frase, y di el motivo de tu llamada de forma directa. Máximo 2 frases.`;
+Saluda al prospecto por su nombre, preséntate brevemente en UNA frase (usando tu nombre si lo tienes asignado, o simplemente "de Orkesta" si no), y di el motivo de tu llamada de forma directa. Máximo 2 frases.`;
 }
 
 export async function* streamCompletion(
