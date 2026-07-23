@@ -1,7 +1,17 @@
 import Twilio from 'twilio';
-import { config } from '../config';
+import { config, isConfigured } from '../config';
 
-const twilioClient = Twilio(config.twilio.accountSid, config.twilio.authToken);
+let _twilioClient: ReturnType<typeof Twilio> | null = null;
+
+function getTwilioClient() {
+  if (!_twilioClient) {
+    if (!isConfigured('twilio')) {
+      throw new Error('Twilio no está configurado. Configura TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_PHONE_NUMBER.');
+    }
+    _twilioClient = Twilio(config.twilio.accountSid, config.twilio.authToken);
+  }
+  return _twilioClient;
+}
 
 export async function initiateCall(params: {
   to: string;
@@ -11,7 +21,7 @@ export async function initiateCall(params: {
 }): Promise<string> {
   const twimlUrl = `${config.publicBaseUrl}/api/twilio/voice?prospectId=${encodeURIComponent(params.prospectId)}&campaignId=${encodeURIComponent(params.campaignId)}&ownerId=${encodeURIComponent(params.ownerId)}`;
 
-  const call = await twilioClient.calls.create({
+  const call = await getTwilioClient().calls.create({
     to: params.to,
     from: config.twilio.phoneNumber,
     url: twimlUrl,
@@ -31,7 +41,8 @@ export function generateStreamTwiml(params: {
   campaignId: string;
   ownerId: string;
 }): string {
-  const streamUrl = config.publicBaseUrl.replace(/^http/, 'ws') + '/media-stream';
+  const baseUrl = config.publicBaseUrl || 'https://example.com';
+  const streamUrl = baseUrl.replace(/^http/, 'ws') + '/media-stream';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

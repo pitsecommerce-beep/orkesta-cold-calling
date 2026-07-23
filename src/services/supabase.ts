@@ -1,23 +1,40 @@
-import { createClient } from '@supabase/supabase-js';
-import { config } from '../config';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { config, isConfigured } from '../config';
 import type {
   Prospect, Campaign, Call, CallReport,
   ConversationTurn, ProspectStatus, CallOutcome, CallDisposition,
 } from '../models/types';
 
-export const supabaseAdmin = createClient(
-  config.supabase.url,
-  config.supabase.serviceRoleKey,
-);
+let _supabaseAdmin: SupabaseClient | null = null;
+
+export function getSupabaseAdmin(): SupabaseClient {
+  if (!_supabaseAdmin) {
+    if (!isConfigured('supabase')) {
+      throw new Error('Supabase no está configurado. Configura SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_ROLE_KEY.');
+    }
+    _supabaseAdmin = createClient(config.supabase.url, config.supabase.serviceRoleKey);
+  }
+  return _supabaseAdmin;
+}
+
+// Keep backward-compatible export as a getter
+export const supabaseAdmin = new Proxy({} as SupabaseClient, {
+  get(_target, prop) {
+    return (getSupabaseAdmin() as any)[prop];
+  },
+});
 
 export function supabaseClient(accessToken: string) {
+  if (!isConfigured('supabase')) {
+    throw new Error('Supabase no está configurado.');
+  }
   return createClient(config.supabase.url, config.supabase.anonKey, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   });
 }
 
 export async function getProspect(id: string): Promise<Prospect | null> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('prospects')
     .select('*')
     .eq('id', id)
@@ -27,7 +44,7 @@ export async function getProspect(id: string): Promise<Prospect | null> {
 }
 
 export async function getProspectsByOwner(ownerId: string): Promise<Prospect[]> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('prospects')
     .select('*')
     .eq('owner_id', ownerId)
@@ -37,7 +54,7 @@ export async function getProspectsByOwner(ownerId: string): Promise<Prospect[]> 
 }
 
 export async function getCampaign(id: string): Promise<Campaign | null> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('campaigns')
     .select('*')
     .eq('id', id)
@@ -52,7 +69,7 @@ export async function createCallRecord(params: {
   twilioCallSid: string;
   ownerId: string;
 }): Promise<string> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('calls')
     .insert({
       prospect_id: params.prospectId,
@@ -76,7 +93,7 @@ export async function updateCallRecord(callId: string, updates: {
   sentimiento?: string;
   grabacion_url?: string;
 }) {
-  const { error } = await supabaseAdmin
+  const { error } = await getSupabaseAdmin()
     .from('calls')
     .update(updates)
     .eq('id', callId);
@@ -91,7 +108,7 @@ export async function saveTranscripts(callId: string, turns: ConversationTurn[])
     timestamp_inicio: t.timestamp.toISOString(),
   }));
   if (rows.length === 0) return;
-  const { error } = await supabaseAdmin.from('transcripts').insert(rows);
+  const { error } = await getSupabaseAdmin().from('transcripts').insert(rows);
   if (error) throw error;
 }
 
@@ -103,14 +120,14 @@ export async function saveCallReport(callId: string, report: {
   datos_extraidos: Record<string, unknown>;
   recomendacion_siguiente_paso: string;
 }) {
-  const { error } = await supabaseAdmin
+  const { error } = await getSupabaseAdmin()
     .from('call_reports')
     .insert({ call_id: callId, ...report });
   if (error) throw error;
 }
 
 export async function updateProspectStatus(prospectId: string, status: ProspectStatus) {
-  const { error } = await supabaseAdmin
+  const { error } = await getSupabaseAdmin()
     .from('prospects')
     .update({ status })
     .eq('id', prospectId);
@@ -118,7 +135,7 @@ export async function updateProspectStatus(prospectId: string, status: ProspectS
 }
 
 export async function getCallsForProspect(prospectId: string): Promise<Call[]> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('calls')
     .select('*')
     .eq('prospect_id', prospectId)
@@ -128,21 +145,23 @@ export async function getCallsForProspect(prospectId: string): Promise<Call[]> {
 }
 
 export async function getCallWithDetails(callId: string) {
-  const { data: call, error: callError } = await supabaseAdmin
+  const admin = getSupabaseAdmin();
+
+  const { data: call, error: callError } = await admin
     .from('calls')
     .select('*')
     .eq('id', callId)
     .single();
   if (callError) throw callError;
 
-  const { data: transcripts, error: tError } = await supabaseAdmin
+  const { data: transcripts, error: tError } = await admin
     .from('transcripts')
     .select('*')
     .eq('call_id', callId)
     .order('timestamp_inicio', { ascending: true });
   if (tError) throw tError;
 
-  const { data: report, error: rError } = await supabaseAdmin
+  const { data: report, error: rError } = await admin
     .from('call_reports')
     .select('*')
     .eq('call_id', callId)
