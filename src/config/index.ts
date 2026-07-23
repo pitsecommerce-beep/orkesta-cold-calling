@@ -18,7 +18,7 @@ function required(name: string): string {
 
 export const config = {
   port: parseInt(process.env.PORT || '3000', 10),
-  publicBaseUrl: required('PUBLIC_BASE_URL'),
+  publicBaseUrl: required('PUBLIC_BASE_URL').replace(/\/+$/, ''),
 
   twilio: {
     accountSid: required('TWILIO_ACCOUNT_SID'),
@@ -28,7 +28,7 @@ export const config = {
 
   deepgram: {
     apiKey: required('DEEPGRAM_API_KEY'),
-    ttsVoice: optional('DEEPGRAM_TTS_VOICE', 'aura-2-thalia-es'),
+    ttsVoice: optional('DEEPGRAM_TTS_VOICE', 'aura-2-diana-es'),
   },
 
   openai: {
