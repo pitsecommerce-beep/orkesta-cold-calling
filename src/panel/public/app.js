@@ -385,6 +385,7 @@ window.editCampaign = function(id) {
   document.getElementById('campaign-contexto').value = c.contexto_negocio;
   document.getElementById('campaign-prompt').value = c.system_prompt;
   document.getElementById('campaign-voz').value = c.voz_configurada || '';
+  document.getElementById('campaign-llm-model').value = c.llm_model || '';
   document.getElementById('campaign-modal-title').textContent = 'Editar campaña';
   document.getElementById('campaign-submit-btn').textContent = 'Guardar cambios';
   document.getElementById('campaign-modal').classList.remove('hidden');
@@ -392,6 +393,29 @@ window.editCampaign = function(id) {
 
 document.getElementById('close-campaign-modal').addEventListener('click', () => {
   document.getElementById('campaign-modal').classList.add('hidden');
+});
+
+document.getElementById('upload-md-btn').addEventListener('click', () => {
+  document.getElementById('md-file-input').click();
+});
+
+document.getElementById('md-file-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const content = ev.target.result;
+    const prompt = document.getElementById('campaign-prompt');
+    if (prompt.value.trim()) {
+      prompt.value += '\n\n--- Documento: ' + file.name + ' ---\n\n' + content;
+    } else {
+      prompt.value = content;
+    }
+    document.getElementById('md-file-name').textContent = file.name;
+    showToast('Documento cargado al prompt', 'success');
+  };
+  reader.readAsText(file);
+  e.target.value = '';
 });
 
 document.getElementById('campaign-form').addEventListener('submit', async (e) => {
@@ -403,6 +427,7 @@ document.getElementById('campaign-form').addEventListener('submit', async (e) =>
     contexto_negocio: document.getElementById('campaign-contexto').value,
     system_prompt: document.getElementById('campaign-prompt').value,
     voz_configurada: document.getElementById('campaign-voz').value || null,
+    llm_model: document.getElementById('campaign-llm-model').value || null,
   };
 
   try {

@@ -6,8 +6,16 @@ export const twilioRouter = Router();
 
 twilioRouter.post('/voice', (req: Request, res: Response) => {
   const { prospectId, campaignId, ownerId } = req.query as Record<string, string>;
+  const answeredBy = req.body?.AnsweredBy || 'unknown';
 
-  console.log(`[Twilio] Voice webhook — prospect: ${prospectId}, campaign: ${campaignId}`);
+  console.log(`[Twilio] Voice webhook — prospect: ${prospectId}, campaign: ${campaignId}, answeredBy: ${answeredBy}`);
+
+  if (answeredBy.startsWith('machine') || answeredBy === 'fax') {
+    console.log(`[Twilio] Voicemail/machine detected (${answeredBy}) — hanging up`);
+    res.type('text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
+    return;
+  }
 
   const twiml = twilioService.generateStreamTwiml({
     prospectId: prospectId || '',

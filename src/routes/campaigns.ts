@@ -42,7 +42,7 @@ campaignsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => 
 });
 
 campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
-  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada } = req.body;
+  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, llm_model } = req.body;
 
   if (!nombre || !objetivo || !contexto_negocio || !system_prompt) {
     res.status(400).json({ error: 'nombre, objetivo, contexto_negocio y system_prompt son requeridos' });
@@ -58,6 +58,7 @@ campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
         contexto_negocio,
         system_prompt,
         voz_configurada: voz_configurada || null,
+        llm_model: llm_model || null,
         owner_id: req.userId!,
       })
       .select()
@@ -72,7 +73,7 @@ campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 campaignsRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => {
-  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, activa } = req.body;
+  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, llm_model, activa } = req.body;
 
   try {
     const updates: Record<string, unknown> = {};
@@ -81,6 +82,7 @@ campaignsRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => 
     if (contexto_negocio !== undefined) updates.contexto_negocio = contexto_negocio;
     if (system_prompt !== undefined) updates.system_prompt = system_prompt;
     if (voz_configurada !== undefined) updates.voz_configurada = voz_configurada;
+    if (llm_model !== undefined) updates.llm_model = llm_model;
     if (activa !== undefined) updates.activa = activa;
 
     const { data, error } = await supabaseAdmin

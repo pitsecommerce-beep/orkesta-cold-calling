@@ -31,9 +31,20 @@ export async function initiateCall(params: {
     record: true,
     recordingStatusCallback: `${config.publicBaseUrl}/api/twilio/recording`,
     recordingStatusCallbackMethod: 'POST',
+    machineDetection: 'Enable',
+    machineDetectionTimeout: 5,
   });
 
   return call.sid;
+}
+
+export async function hangupCall(callSid: string): Promise<void> {
+  try {
+    await getTwilioClient().calls(callSid).update({ status: 'completed' });
+    console.log(`[Twilio] Hung up call ${callSid}`);
+  } catch (err) {
+    console.error(`[Twilio] Failed to hang up ${callSid}:`, err);
+  }
 }
 
 export function generateStreamTwiml(params: {
