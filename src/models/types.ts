@@ -55,6 +55,7 @@ export interface Campaign {
   contexto_negocio: string;
   voz_configurada: string | null;
   llm_model: string | null;
+  nombre_agente: string | null;
   system_prompt: string;
   activa: boolean;
   owner_id: string;

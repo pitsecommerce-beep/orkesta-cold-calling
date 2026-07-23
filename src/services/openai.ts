@@ -57,6 +57,20 @@ const TOOL_DEFINITIONS: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'consultar_sistema',
+      description: 'Usar cuando necesitas un momento para pensar, consultar información o formular una respuesta compleja. El prospecto escuchará que estás tecleando y buscando datos en tu sistema, como haría un vendedor real.',
+      parameters: {
+        type: 'object',
+        properties: {
+          motivo: { type: 'string', description: 'Qué estás consultando o verificando' },
+        },
+        required: ['motivo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'finalizar_llamada',
       description: 'Terminar la llamada de forma cortés',
       parameters: {
@@ -81,7 +95,12 @@ export function buildSystemPrompt(params: {
   prospectName: string;
   prospectCompany?: string;
   prospectNotes?: string;
+  agentName?: string;
 }): string {
+  const agentNameBlock = params.agentName
+    ? `\n## Tu identidad\n- Tu nombre es ${params.agentName}. Preséntate siempre con ese nombre.\n- NUNCA inventes otro nombre.`
+    : `\n## Tu identidad\n- NO uses ningún nombre propio al presentarte. Di simplemente "le habla de Orkesta" o "le llamo de Orkesta".\n- NUNCA inventes un nombre personal como "Arturo", "Carlos", etc.`;
+
   const prospectBlock = `
 ## Información del prospecto
 - Nombre: ${params.prospectName}
@@ -89,7 +108,7 @@ ${params.prospectCompany ? `- Empresa: ${params.prospectCompany}` : ''}
 ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}`.trim();
 
   if (params.customSystemPrompt) {
-    return `${params.customSystemPrompt}\n\n${prospectBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
+    return `${params.customSystemPrompt}\n\n${agentNameBlock}\n\n${prospectBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
   }
 
   return `Eres un agente de ventas profesional de Orkesta, una empresa mexicana de soluciones de inteligencia artificial. Tu slogan es "AI Solutions Orchestrated".
@@ -104,6 +123,7 @@ ${params.businessContext}
 - Nombre: ${params.prospectName}
 ${params.prospectCompany ? `- Empresa: ${params.prospectCompany}` : ''}
 ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}
+${agentNameBlock}
 
 ## Estilo de habla — suena como una persona real
 - Habla en español mexicano natural. Usa "usted" pero con tono cálido, como un vendedor amigable.
@@ -124,9 +144,11 @@ ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}
 - Si logras agendar una cita, usa agendar_cita.
 - Cuando sea natural, registra el interés con registrar_interes.
 - Al despedirte, siempre usa finalizar_llamada con el resultado apropiado.
+- Cuando necesites pensar una respuesta compleja o el prospecto haga una pregunta que requiera elaboración, di algo breve como "Déjeme checarlo rápido" o "Permítame un momento" y usa consultar_sistema. El prospecto escuchará que tecleas, como un vendedor real consultando su computadora. Esto es MUCHO mejor que repetir muletillas como "entiendo", "claro", "perfecto" una y otra vez.
+- EVITA repetir la misma palabra de relleno. No digas "entiendo" más de una vez en toda la conversación. Varía: "ok", "claro", "ajá", "muy bien", "sale".
 
 ## Inicio de la conversación
-Saluda al prospecto por su nombre, preséntate brevemente en UNA frase, y di el motivo de tu llamada de forma directa. Máximo 2 frases.`;
+Saluda al prospecto por su nombre, preséntate brevemente en UNA frase (usando tu nombre si lo tienes asignado, o simplemente "de Orkesta" si no), y di el motivo de tu llamada de forma directa. Máximo 2 frases.`;
 }
 
 export async function* streamCompletion(

@@ -7,7 +7,7 @@ import * as twilio from '../services/twilio';
 import { TurnDetector, TurnCompleteEvent } from '../pipeline/turn-detector';
 import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
-import { getAmbientChunk } from '../services/ambient-audio';
+import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus } from '../models/types';
 
@@ -35,6 +35,7 @@ export class CallSession {
   private ttsVoice: string | undefined;
   private llmModel: string | undefined;
 
+  private processingResponse = false;
   private ambientInterval: NodeJS.Timeout | null = null;
   private ambientOffset = 0;
   private silenceTimer: NodeJS.Timeout | null = null;
@@ -98,6 +99,7 @@ export class CallSession {
         prospectName: prospect.nombre,
         prospectCompany: prospect.empresa || undefined,
         prospectNotes: prospect.notas || undefined,
+        agentName: campaign?.nombre_agente || undefined,
       });
 
       this.conversationHistory.push({ role: 'system', content: systemPrompt });
@@ -117,7 +119,7 @@ export class CallSession {
   private startAmbientAudio() {
     if (this.ambientInterval) return;
     this.ambientInterval = setInterval(() => {
-      if (this.disposed || !this.streamSid || this.isAgentSpeaking) return;
+      if (this.disposed || !this.streamSid || this.isAgentSpeaking || this.processingResponse) return;
       if (this.twilioWs.readyState !== WebSocket.OPEN) return;
       const { chunk, nextOffset } = getAmbientChunk(this.ambientOffset, 200);
       this.ambientOffset = nextOffset;
@@ -279,6 +281,7 @@ export class CallSession {
   private async processLLMResponse() {
     if (this.disposed || !this.streamSid) return;
 
+    this.processingResponse = true;
     this.currentAbort = new AbortController();
     const signal = this.currentAbort.signal;
 
@@ -346,6 +349,8 @@ export class CallSession {
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       console.error('[CallSession] LLM response error:', err);
+    } finally {
+      this.processingResponse = false;
     }
   }
 
@@ -372,6 +377,14 @@ export class CallSession {
       if (err instanceof Error && err.name === 'AbortError') return;
       console.error('[CallSession] TTS error:', err);
     }
+  }
+
+  private playTypingSounds(durationMs: number) {
+    if (!this.streamSid || this.disposed) return;
+    const typingAudio = generateTypingBurst(durationMs);
+    this.isAgentSpeaking = true;
+    this.playbackQueue.sendAudio(typingAudio, this.twilioWs, this.streamSid);
+    this.playbackQueue.sendMark(this.twilioWs, this.streamSid);
   }
 
   private async executeToolCall(name: string, argsJson: string): Promise<string> {
@@ -402,6 +415,12 @@ export class CallSession {
           const status = nivelMap[args.nivel] || 'contactado';
           await db.updateProspectStatus(this.prospectId, status);
           return JSON.stringify({ success: true, message: `Interés registrado: ${args.nivel}` });
+        }
+
+        case 'consultar_sistema': {
+          console.log(`[CallSession] Agent consulting: ${args.motivo}`);
+          this.playTypingSounds(3000);
+          return JSON.stringify({ success: true, message: 'Consulta realizada. Ahora responde al prospecto con la información.' });
         }
 
         case 'finalizar_llamada': {
