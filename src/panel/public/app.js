@@ -19,10 +19,9 @@ async function api(path, options = {}) {
 // ---- Toast notifications ----
 function showToast(message, type = 'info', duration = 3500) {
   const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
+  toast.className = `toast toast-${type} show`;
   toast.textContent = message;
   document.body.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add('show'));
   setTimeout(() => {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
