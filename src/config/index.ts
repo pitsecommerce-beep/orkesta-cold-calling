@@ -32,9 +32,15 @@ export const config = {
   },
 
   openai: {
-    apiKey: required('OPENAI_API_KEY'),
+    apiKey: optional('OPENAI_API_KEY'),
     model: optional('OPENAI_MODEL', 'gpt-4.1'),
     reportModel: optional('OPENAI_REPORT_MODEL', 'gpt-4.1-mini'),
+  },
+
+  anthropic: {
+    apiKey: optional('ANTHROPIC_API_KEY'),
+    model: optional('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+    reportModel: optional('ANTHROPIC_REPORT_MODEL', 'claude-haiku-4-5-20251001'),
   },
 
   supabase: {
@@ -51,7 +57,7 @@ export function getMissingVars(): string[] {
   return [...missingVars];
 }
 
-export function isConfigured(service: 'twilio' | 'deepgram' | 'openai' | 'supabase'): boolean {
+export function isConfigured(service: 'twilio' | 'deepgram' | 'openai' | 'anthropic' | 'supabase'): boolean {
   switch (service) {
     case 'twilio':
       return !!(config.twilio.accountSid && config.twilio.authToken && config.twilio.phoneNumber);
@@ -59,6 +65,8 @@ export function isConfigured(service: 'twilio' | 'deepgram' | 'openai' | 'supaba
       return !!config.deepgram.apiKey;
     case 'openai':
       return !!config.openai.apiKey;
+    case 'anthropic':
+      return !!config.anthropic.apiKey;
     case 'supabase':
       return !!(config.supabase.url && config.supabase.anonKey && config.supabase.serviceRoleKey);
   }

@@ -42,7 +42,7 @@ campaignsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => 
 });
 
 campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
-  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, llm_model, nombre_agente } = req.body;
+  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, llm_model, nombre_agente, tono_agente } = req.body;
 
   if (!nombre || !objetivo || !contexto_negocio || !system_prompt) {
     res.status(400).json({ error: 'nombre, objetivo, contexto_negocio y system_prompt son requeridos' });
@@ -60,6 +60,7 @@ campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
         voz_configurada: voz_configurada || null,
         llm_model: llm_model || null,
         nombre_agente: nombre_agente || null,
+        tono_agente: tono_agente || null,
         owner_id: req.userId!,
       })
       .select()
@@ -74,7 +75,7 @@ campaignsRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 campaignsRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => {
-  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, llm_model, nombre_agente, activa } = req.body;
+  const { nombre, objetivo, contexto_negocio, system_prompt, voz_configurada, llm_model, nombre_agente, tono_agente, activa } = req.body;
 
   try {
     const updates: Record<string, unknown> = {};
@@ -85,6 +86,7 @@ campaignsRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => 
     if (voz_configurada !== undefined) updates.voz_configurada = voz_configurada;
     if (llm_model !== undefined) updates.llm_model = llm_model;
     if (nombre_agente !== undefined) updates.nombre_agente = nombre_agente;
+    if (tono_agente !== undefined) updates.tono_agente = tono_agente;
     if (activa !== undefined) updates.activa = activa;
 
     const { data, error } = await supabaseAdmin
