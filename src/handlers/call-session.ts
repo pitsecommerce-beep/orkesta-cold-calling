@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { DeepgramSTT } from '../services/deepgram-stt';
 import * as tts from '../services/deepgram-tts';
-import * as openai from '../services/openai';
+import * as llm from '../services/llm';
 import * as db from '../services/supabase';
 import * as twilio from '../services/twilio';
 import { TurnDetector, TurnCompleteEvent } from '../pipeline/turn-detector';
@@ -10,6 +10,7 @@ import { PlaybackQueue } from '../pipeline/playback-queue';
 import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus } from '../models/types';
+import type { ConversationMessage } from '../services/llm';
 
 export class CallSession {
   private twilioWs: WebSocket;
@@ -25,7 +26,7 @@ export class CallSession {
   private phraseChunker: PhraseChunker;
   private playbackQueue: PlaybackQueue;
 
-  private conversationHistory: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string }> = [];
+  private conversationHistory: ConversationMessage[] = [];
   private turns: ConversationTurn[] = [];
   private isAgentSpeaking = false;
   private currentAbort: AbortController | null = null;
@@ -34,6 +35,7 @@ export class CallSession {
   private disposed = false;
   private ttsVoice: string | undefined;
   private llmModel: string | undefined;
+  private toneAgente: string | undefined;
 
   private processingResponse = false;
   private ambientInterval: NodeJS.Timeout | null = null;
@@ -85,6 +87,9 @@ export class CallSession {
       if (campaign?.llm_model) {
         this.llmModel = campaign.llm_model;
       }
+      if (campaign?.tono_agente) {
+        this.toneAgente = campaign.tono_agente;
+      }
 
       this.callId = await db.createCallRecord({
         prospectId: this.prospectId,
@@ -93,7 +98,7 @@ export class CallSession {
         ownerId: this.ownerId,
       });
 
-      const systemPrompt = openai.buildSystemPrompt({
+      const systemPrompt = llm.buildSystemPrompt({
         campaignObjective: campaign?.objetivo || 'Presentar los servicios de Orkesta y detectar interés.',
         businessContext: campaign?.contexto_negocio || 'Orkesta ofrece soluciones de IA para empresas.',
         customSystemPrompt: campaign?.system_prompt,
@@ -101,6 +106,7 @@ export class CallSession {
         prospectCompany: prospect.empresa || undefined,
         prospectNotes: prospect.notas || undefined,
         agentName: campaign?.nombre_agente || undefined,
+        tone: this.toneAgente,
       });
 
       this.conversationHistory.push({ role: 'system', content: systemPrompt });
@@ -290,7 +296,7 @@ export class CallSession {
       let fullResponse = '';
       this.phraseChunker.reset();
 
-      const stream = openai.streamCompletion(this.conversationHistory, signal, this.llmModel);
+      const stream = llm.streamCompletion(this.conversationHistory, signal, this.llmModel);
 
       for await (const event of stream) {
         if (signal.aborted) break;
@@ -316,6 +322,7 @@ export class CallSession {
           this.conversationHistory.push({
             role: 'assistant',
             content: fullResponse || '',
+            tool_calls: [{ id: event.toolCallId!, name: event.toolName!, arguments: event.toolArgs! }],
           });
           this.conversationHistory.push({
             role: 'tool',
@@ -488,7 +495,7 @@ export class CallSession {
 
         if (this.turns.length > 0) {
           console.log('[CallSession] Generating call report...');
-          const report = await openai.generateCallReport(this.turns);
+          const report = await llm.generateCallReport(this.turns, this.llmModel);
           await db.saveCallReport(this.callId, report);
           console.log('[CallSession] Report saved');
         }

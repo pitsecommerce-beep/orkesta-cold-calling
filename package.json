@@ -13,6 +13,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.114.0",
     "@deepgram/sdk": "^3.9.0",
     "@supabase/supabase-js": "^2.49.0",
     "cors": "^2.8.5",
