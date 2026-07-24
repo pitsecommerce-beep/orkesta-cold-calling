@@ -143,6 +143,17 @@
               <input type="text" id="campaign-nombre-agente" placeholder="Ej: Laura, Miguel... (dejar vacío para no usar nombre)">
             </div>
             <div class="form-group">
+              <label>Tono del agente</label>
+              <select id="campaign-tono">
+                <option value="">Predeterminado (profesional)</option>
+                <option value="profesional">Profesional</option>
+                <option value="alegre">Alegre y entusiasta</option>
+                <option value="serio">Serio y ejecutivo</option>
+                <option value="casual">Casual (tuteo)</option>
+                <option value="energetico">Energético y dinámico</option>
+              </select>
+            </div>
+            <div class="form-group">
               <label>Modelo de IA para la conversación</label>
               <select id="campaign-llm-model">
                 <option value="">Predeterminado (gpt-4.1)</option>
@@ -152,6 +163,11 @@
                   <option value="gpt-4.1-nano">GPT-4.1 Nano (ultra rápido)</option>
                   <option value="gpt-4o">GPT-4o</option>
                   <option value="gpt-4o-mini">GPT-4o Mini</option>
+                </optgroup>
+                <optgroup label="Anthropic (Claude)">
+                  <option value="claude-sonnet-5">Claude Sonnet 5 (recomendado)</option>
+                  <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (rápido/económico)</option>
+                  <option value="claude-opus-4-8">Claude Opus 4.8 (más capaz)</option>
                 </optgroup>
               </select>
             </div>
