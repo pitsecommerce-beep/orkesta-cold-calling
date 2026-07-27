@@ -40,6 +40,7 @@ export class CallSession {
   private processingResponse = false;
   private ambientInterval: NodeJS.Timeout | null = null;
   private ambientOffset = 0;
+  private phraseQueue: string[] = [];
   private silenceTimer: NodeJS.Timeout | null = null;
   private noResponseCount = 0;
   private static readonly SILENCE_TIMEOUT_MS = 15000;
@@ -66,6 +67,7 @@ export class CallSession {
   async initialize(streamSid: string, callSid: string) {
     this.streamSid = streamSid;
     this.callSid = callSid;
+    this.playbackQueue.setTarget(this.twilioWs, streamSid);
 
     console.log(`[CallSession] Initializing call ${callSid} for prospect ${this.prospectId}`);
 
@@ -237,6 +239,9 @@ export class CallSession {
     this.playbackQueue.handleMarkReceived(markName);
     if (!this.playbackQueue.isPlaying) {
       this.isAgentSpeaking = false;
+      if (!this.processingResponse) {
+        this.startAmbientAudio();
+      }
     }
   }
 
@@ -249,10 +254,8 @@ export class CallSession {
       this.currentAbort = null;
     }
 
-    if (this.streamSid) {
-      this.playbackQueue.sendClear(this.twilioWs, this.streamSid);
-    }
-
+    this.playbackQueue.sendClear();
+    this.phraseQueue.length = 0;
     this.phraseChunker.reset();
     this.turnDetector.reset();
   }
@@ -276,8 +279,8 @@ export class CallSession {
     if (config.enableFillerPhrases && this.streamSid) {
       const filler = tts.getRandomFiller();
       if (filler) {
-        this.playbackQueue.sendAudio(filler.audio, this.twilioWs, this.streamSid);
-        this.playbackQueue.sendMark(this.twilioWs, this.streamSid);
+        this.playbackQueue.sendAudio(filler.audio);
+        this.playbackQueue.sendMark();
         this.isAgentSpeaking = true;
       }
     }
@@ -289,12 +292,29 @@ export class CallSession {
     if (this.disposed || !this.streamSid) return;
 
     this.processingResponse = true;
+    this.stopAmbientAudio();
     this.currentAbort = new AbortController();
     const signal = this.currentAbort.signal;
 
     try {
       let fullResponse = '';
       this.phraseChunker.reset();
+      this.phraseQueue.length = 0;
+      let llmDone = false;
+      let ttsError: Error | null = null;
+
+      const ttsConsumer = (async () => {
+        while (!signal.aborted) {
+          if (this.phraseQueue.length > 0) {
+            const phrase = this.phraseQueue.shift()!;
+            await this.speakChunk(phrase, signal);
+          } else if (llmDone) {
+            break;
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        }
+      })().catch(err => { ttsError = err; });
 
       const stream = llm.streamCompletion(this.conversationHistory, signal, this.llmModel);
 
@@ -306,16 +326,16 @@ export class CallSession {
 
           const chunk = this.phraseChunker.addToken(event.text);
           if (chunk) {
-            await this.speakChunk(chunk, signal);
+            this.phraseQueue.push(chunk);
           }
         }
 
         if (event.type === 'tool_call' && event.toolName && event.toolArgs) {
-          // Flush any remaining text before handling tool
           const remaining = this.phraseChunker.flush();
-          if (remaining) {
-            await this.speakChunk(remaining, signal);
-          }
+          if (remaining) this.phraseQueue.push(remaining);
+
+          llmDone = true;
+          await ttsConsumer;
 
           const toolResult = await this.executeToolCall(event.toolName, event.toolArgs);
 
@@ -333,18 +353,20 @@ export class CallSession {
           fullResponse = '';
           this.phraseChunker.reset();
 
-          // Continue with tool result — recursive call
           await this.processLLMResponse();
           return;
         }
 
         if (event.type === 'done') {
           const remaining = this.phraseChunker.flush();
-          if (remaining) {
-            await this.speakChunk(remaining, signal);
-          }
+          if (remaining) this.phraseQueue.push(remaining);
         }
       }
+
+      llmDone = true;
+      await ttsConsumer;
+
+      if (ttsError) throw ttsError;
 
       if (fullResponse.trim()) {
         this.conversationHistory.push({ role: 'assistant', content: fullResponse });
@@ -359,6 +381,9 @@ export class CallSession {
       console.error('[CallSession] LLM response error:', err);
     } finally {
       this.processingResponse = false;
+      if (!this.playbackQueue.isPlaying) {
+        this.startAmbientAudio();
+      }
     }
   }
 
@@ -371,7 +396,7 @@ export class CallSession {
         text,
         (chunk) => {
           if (!signal.aborted && this.streamSid) {
-            this.playbackQueue.sendAudio(chunk, this.twilioWs, this.streamSid);
+            this.playbackQueue.sendAudio(chunk);
           }
         },
         signal,
@@ -379,7 +404,7 @@ export class CallSession {
       );
 
       if (!signal.aborted && this.streamSid) {
-        this.playbackQueue.sendMark(this.twilioWs, this.streamSid);
+        this.playbackQueue.sendMark();
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -391,8 +416,8 @@ export class CallSession {
     if (!this.streamSid || this.disposed) return;
     const typingAudio = generateTypingBurst(durationMs);
     this.isAgentSpeaking = true;
-    this.playbackQueue.sendAudio(typingAudio, this.twilioWs, this.streamSid);
-    this.playbackQueue.sendMark(this.twilioWs, this.streamSid);
+    this.playbackQueue.sendAudio(typingAudio);
+    this.playbackQueue.sendMark();
   }
 
   private async executeToolCall(name: string, argsJson: string): Promise<string> {
@@ -478,6 +503,7 @@ export class CallSession {
     }
 
     this.turnDetector.reset();
+    this.playbackQueue.reset();
     this.stt?.close();
 
     const endTime = new Date();

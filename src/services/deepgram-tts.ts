@@ -46,6 +46,7 @@ export async function synthesize(text: string, signal?: AbortSignal, voiceOverri
     headers: {
       Authorization: `Token ${config.deepgram.apiKey}`,
       'Content-Type': 'application/json',
+      Connection: 'keep-alive',
     },
     body: JSON.stringify({ text }),
     signal,
@@ -74,6 +75,7 @@ export async function synthesizeStream(
     headers: {
       Authorization: `Token ${config.deepgram.apiKey}`,
       'Content-Type': 'application/json',
+      Connection: 'keep-alive',
     },
     body: JSON.stringify({ text }),
     signal,
