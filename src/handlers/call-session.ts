@@ -41,6 +41,7 @@ export class CallSession {
   private ambientInterval: NodeJS.Timeout | null = null;
   private ambientOffset = 0;
   private phraseQueue: string[] = [];
+  private responseGeneration = 0;
   private silenceTimer: NodeJS.Timeout | null = null;
   private noResponseCount = 0;
   private static readonly SILENCE_TIMEOUT_MS = 15000;
@@ -291,19 +292,26 @@ export class CallSession {
   private async processLLMResponse() {
     if (this.disposed || !this.streamSid) return;
 
+    if (this.currentAbort) {
+      this.currentAbort.abort();
+    }
+
+    const generation = ++this.responseGeneration;
     this.processingResponse = true;
     this.stopAmbientAudio();
     this.currentAbort = new AbortController();
     const signal = this.currentAbort.signal;
 
+    let llmDone = false;
+    let ttsConsumer: Promise<void> | null = null;
+
     try {
       let fullResponse = '';
       this.phraseChunker.reset();
       this.phraseQueue.length = 0;
-      let llmDone = false;
       let ttsError: Error | null = null;
 
-      const ttsConsumer = (async () => {
+      ttsConsumer = (async () => {
         while (!signal.aborted) {
           if (this.phraseQueue.length > 0) {
             const phrase = this.phraseQueue.shift()!;
@@ -380,9 +388,13 @@ export class CallSession {
       if (err instanceof Error && err.name === 'AbortError') return;
       console.error('[CallSession] LLM response error:', err);
     } finally {
-      this.processingResponse = false;
-      if (!this.playbackQueue.isPlaying) {
-        this.startAmbientAudio();
+      llmDone = true;
+      if (ttsConsumer) await ttsConsumer.catch(() => {});
+      if (this.responseGeneration === generation) {
+        this.processingResponse = false;
+        if (!this.playbackQueue.isPlaying) {
+          this.startAmbientAudio();
+        }
       }
     }
   }

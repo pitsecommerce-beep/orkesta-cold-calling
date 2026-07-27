@@ -8,6 +8,7 @@ export class PlaybackQueue {
   private pendingMarks = new Set<string>();
   private frameQueue: Array<{ type: 'audio'; payload: string } | { type: 'mark'; name: string }> = [];
   private draining = false;
+  private drainId = 0;
   private ws: WebSocket | null = null;
   private streamSid: string | null = null;
 
@@ -44,6 +45,7 @@ export class PlaybackQueue {
   sendClear() {
     this.frameQueue.length = 0;
     this.draining = false;
+    this.drainId++;
     if (this.ws?.readyState === WebSocket.OPEN && this.streamSid) {
       this.ws.send(JSON.stringify({ event: 'clear', streamSid: this.streamSid }));
     }
@@ -54,15 +56,19 @@ export class PlaybackQueue {
     this.frameQueue.length = 0;
     this.pendingMarks.clear();
     this.draining = false;
+    this.drainId++;
   }
 
   private startDrain() {
     if (this.draining) return;
     this.draining = true;
-    this.drainNext();
+    const id = ++this.drainId;
+    this.drainNext(id);
   }
 
-  private drainNext() {
+  private drainNext(id: number) {
+    if (id !== this.drainId) return;
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.streamSid) {
       this.draining = false;
       return;
@@ -80,14 +86,14 @@ export class PlaybackQueue {
         streamSid: this.streamSid,
         media: { payload: item.payload },
       }));
-      setTimeout(() => this.drainNext(), FRAME_INTERVAL_MS);
+      setTimeout(() => this.drainNext(id), FRAME_INTERVAL_MS);
     } else if (item.type === 'mark') {
       this.ws.send(JSON.stringify({
         event: 'mark',
         streamSid: this.streamSid,
         mark: { name: item.name },
       }));
-      this.drainNext();
+      this.drainNext(id);
     }
   }
 }
