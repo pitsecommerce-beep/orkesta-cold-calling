@@ -100,7 +100,7 @@ export async function* streamChat(
 
   const stream = await client.messages.create({
     model: model || config.anthropic.model,
-    max_tokens: 1024,
+    max_tokens: 120,
     system,
     messages: anthropicMessages,
     tools: anthropicTools,

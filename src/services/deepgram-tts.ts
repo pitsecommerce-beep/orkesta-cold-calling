@@ -1,3 +1,4 @@
+import WebSocket from 'ws';
 import { config, isConfigured } from '../config';
 
 const FILLER_PHRASES = [
@@ -61,41 +62,154 @@ export async function synthesize(text: string, signal?: AbortSignal, voiceOverri
   return Buffer.from(arrayBuffer);
 }
 
-export async function synthesizeStream(
-  text: string,
-  onChunk: (chunk: Buffer) => void,
-  signal?: AbortSignal,
-  voiceOverride?: string,
-): Promise<void> {
-  const voice = voiceOverride || config.deepgram.ttsVoice;
-  const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=mulaw&sample_rate=8000&container=none`;
+// ---- Persistent TTS WebSocket ----
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${config.deepgram.apiKey}`,
-      'Content-Type': 'application/json',
-      Connection: 'keep-alive',
-    },
-    body: JSON.stringify({ text }),
-    signal,
-  });
+export class DeepgramTTSStream {
+  private ws: WebSocket | null = null;
+  private audioChunks: Buffer[] = [];
+  private flushResolve: ((audio: Buffer) => void) | null = null;
+  private flushReject: ((err: Error) => void) | null = null;
+  private flushTimestamps: number[] = [];
+  private connected = false;
+  private static readonly MAX_FLUSH_PER_MINUTE = 20;
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Deepgram TTS error ${response.status}: ${body}`);
+  connect(voiceOverride?: string): Promise<void> {
+    if (!isConfigured('deepgram')) {
+      return Promise.reject(new Error('Deepgram no está configurado.'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const voice = voiceOverride || config.deepgram.ttsVoice;
+      const url = `wss://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=mulaw&sample_rate=8000`;
+
+      this.ws = new WebSocket(url, {
+        headers: { Authorization: `Token ${config.deepgram.apiKey}` },
+      });
+
+      this.ws.on('open', () => {
+        this.connected = true;
+        console.log('[TTS-WS] Connected');
+        resolve();
+      });
+
+      this.ws.on('message', (data, isBinary) => {
+        if (isBinary) {
+          this.audioChunks.push(Buffer.from(data as Buffer));
+          return;
+        }
+
+        try {
+          const msg = JSON.parse(data.toString());
+
+          switch (msg.type) {
+            case 'Flushed': {
+              const audio = Buffer.concat(this.audioChunks);
+              this.audioChunks = [];
+              if (this.flushResolve) {
+                this.flushResolve(audio);
+                this.flushResolve = null;
+                this.flushReject = null;
+              }
+              break;
+            }
+
+            case 'Cleared':
+              this.audioChunks = [];
+              break;
+
+            case 'Warning':
+              console.warn('[TTS-WS] Warning:', msg.description || msg);
+              break;
+
+            case 'Metadata':
+              break;
+          }
+        } catch (e) {
+          console.error('[TTS-WS] Parse error:', e);
+        }
+      });
+
+      this.ws.on('error', (err) => {
+        console.error('[TTS-WS] Error:', err);
+        if (!this.connected) {
+          reject(err);
+        }
+        if (this.flushReject) {
+          this.flushReject(err);
+          this.flushResolve = null;
+          this.flushReject = null;
+        }
+      });
+
+      this.ws.on('close', () => {
+        this.connected = false;
+        console.log('[TTS-WS] Closed');
+        if (this.flushReject) {
+          this.flushReject(new Error('TTS WebSocket closed'));
+          this.flushResolve = null;
+          this.flushReject = null;
+        }
+      });
+    });
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body from TTS');
+  get isConnected(): boolean {
+    return this.connected && this.ws?.readyState === WebSocket.OPEN;
+  }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (signal?.aborted) {
-      reader.cancel();
-      break;
+  speak(text: string): void {
+    if (!this.isConnected) return;
+    this.ws!.send(JSON.stringify({ type: 'Speak', text }));
+  }
+
+  flush(): Promise<Buffer> {
+    if (!this.isConnected) {
+      return Promise.reject(new Error('TTS WebSocket not connected'));
     }
-    onChunk(Buffer.from(value));
+
+    if (!this.canFlush()) {
+      console.warn('[TTS-WS] Flush rate limit reached, waiting...');
+    }
+
+    return new Promise((resolve, reject) => {
+      this.flushResolve = resolve;
+      this.flushReject = reject;
+      this.flushTimestamps.push(Date.now());
+      this.ws!.send(JSON.stringify({ type: 'Flush' }));
+    });
+  }
+
+  clear(): void {
+    if (!this.isConnected) return;
+    this.audioChunks = [];
+    if (this.flushResolve) {
+      this.flushResolve(Buffer.alloc(0));
+      this.flushResolve = null;
+      this.flushReject = null;
+    }
+    this.ws!.send(JSON.stringify({ type: 'Clear' }));
+  }
+
+  close(): void {
+    if (this.ws) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'Close' }));
+        this.ws.close();
+      }
+      this.ws = null;
+    }
+    this.connected = false;
+    this.audioChunks = [];
+    if (this.flushReject) {
+      this.flushReject(new Error('TTS WebSocket closed'));
+      this.flushResolve = null;
+      this.flushReject = null;
+    }
+  }
+
+  private canFlush(): boolean {
+    const now = Date.now();
+    this.flushTimestamps = this.flushTimestamps.filter(t => now - t < 60_000);
+    return this.flushTimestamps.length < DeepgramTTSStream.MAX_FLUSH_PER_MINUTE;
   }
 }

@@ -2,8 +2,9 @@ import WebSocket from 'ws';
 import { config, isConfigured } from '../config';
 
 export interface STTCallbacks {
-  onTranscript: (text: string, isFinal: boolean, speechFinal: boolean) => void;
-  onUtteranceEnd: () => void;
+  onTurnEnd: (text: string) => void;
+  onStartOfTurn: () => void;
+  onInterimTranscript?: (text: string) => void;
   onError: (error: Error) => void;
   onClose: () => void;
 }
@@ -12,6 +13,10 @@ export class DeepgramSTT {
   private ws: WebSocket | null = null;
   private callbacks: STTCallbacks;
   private keepAliveInterval: NodeJS.Timeout | null = null;
+  private turnBuffer = '';
+  private audioAccumulator: Buffer[] = [];
+  private accumulatedBytes = 0;
+  private static readonly CHUNK_THRESHOLD = 640; // 4 Twilio frames × 160 bytes = 80ms
 
   constructor(callbacks: STTCallbacks) {
     this.callbacks = callbacks;
@@ -22,17 +27,15 @@ export class DeepgramSTT {
       return Promise.reject(new Error('Deepgram no está configurado. Configura DEEPGRAM_API_KEY.'));
     }
     return new Promise((resolve, reject) => {
-      const url = new URL('wss://api.deepgram.com/v1/listen');
-      url.searchParams.set('model', 'nova-3');
-      url.searchParams.set('language', 'es');
+      const url = new URL('wss://api.deepgram.com/v2/listen');
+      url.searchParams.set('model', 'flux-general-multi');
+      url.searchParams.set('language_hint', 'es');
       url.searchParams.set('encoding', 'mulaw');
       url.searchParams.set('sample_rate', '8000');
       url.searchParams.set('channels', '1');
       url.searchParams.set('punctuate', 'true');
-      url.searchParams.set('interim_results', 'true');
-      url.searchParams.set('endpointing', config.endpointingMs.toString());
-      url.searchParams.set('utterance_end_ms', '1200');
-      url.searchParams.set('smart_format', 'true');
+      url.searchParams.set('eot_threshold', '0.7');
+      url.searchParams.set('eot_timeout_ms', '3500');
 
       this.ws = new WebSocket(url.toString(), {
         headers: { Authorization: `Token ${config.deepgram.apiKey}` },
@@ -55,15 +58,14 @@ export class DeepgramSTT {
             const alt = msg.channel?.alternatives?.[0];
             if (!alt) return;
             const transcript = alt.transcript || '';
-            if (transcript) {
-              this.callbacks.onTranscript(
-                transcript,
-                msg.is_final === true,
-                msg.speech_final === true,
-              );
+            if (transcript && msg.is_final) {
+              this.turnBuffer += (this.turnBuffer ? ' ' : '') + transcript;
             }
-          } else if (msg.type === 'UtteranceEnd') {
-            this.callbacks.onUtteranceEnd();
+            if (transcript && this.callbacks.onInterimTranscript) {
+              this.callbacks.onInterimTranscript(transcript);
+            }
+          } else if (msg.type === 'TurnInfo') {
+            this.handleTurnInfo(msg);
           }
         } catch (e) {
           this.callbacks.onError(e as Error);
@@ -82,10 +84,49 @@ export class DeepgramSTT {
     });
   }
 
-  sendAudio(audioBuffer: Buffer) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(audioBuffer);
+  private handleTurnInfo(msg: { event: string }) {
+    switch (msg.event) {
+      case 'StartOfTurn':
+        this.callbacks.onStartOfTurn();
+        break;
+
+      case 'EndOfTurn': {
+        const text = this.turnBuffer.trim();
+        this.turnBuffer = '';
+        if (text) {
+          this.callbacks.onTurnEnd(text);
+        }
+        break;
+      }
+
+      case 'TurnResumed':
+        break;
+
+      case 'EagerEndOfTurn':
+        break;
+
+      case 'Update':
+        break;
     }
+  }
+
+  sendAudio(audioBuffer: Buffer) {
+    this.audioAccumulator.push(audioBuffer);
+    this.accumulatedBytes += audioBuffer.length;
+
+    if (this.accumulatedBytes >= DeepgramSTT.CHUNK_THRESHOLD) {
+      const combined = Buffer.concat(this.audioAccumulator);
+      this.audioAccumulator = [];
+      this.accumulatedBytes = 0;
+
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(combined);
+      }
+    }
+  }
+
+  resetTurnBuffer() {
+    this.turnBuffer = '';
   }
 
   private cleanup() {
@@ -102,5 +143,8 @@ export class DeepgramSTT {
       this.ws.close();
     }
     this.ws = null;
+    this.audioAccumulator = [];
+    this.accumulatedBytes = 0;
+    this.turnBuffer = '';
   }
 }
