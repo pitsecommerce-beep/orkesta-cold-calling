@@ -68,6 +68,7 @@ export const config = {
   silenceGoodbyeAfterMs: parseInt(process.env.SILENCE_GOODBYE_AFTER_MS || '8000', 10),
   fillerDelayMs: parseInt(process.env.FILLER_DELAY_MS || '350', 10),
   fillerMaxPerCall: parseInt(process.env.FILLER_MAX_PER_CALL || '2', 10),
+  silenceWatchdogMs: parseInt(process.env.SILENCE_WATCHDOG_MS || '45000', 10),
 };
 
 export function getMissingVars(): string[] {

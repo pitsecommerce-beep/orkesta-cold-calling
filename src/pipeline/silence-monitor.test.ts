@@ -99,6 +99,62 @@ async function testDoneStateIgnoresArm() {
   console.log('  PASS: done state ignores arm');
 }
 
+async function testWatchdogFiresGoodbyeOnInactivity() {
+  nudgeCount = 0;
+  goodbyeCount = 0;
+  canFireResult = true;
+  const m = new SilenceMonitor(
+    {
+      canFire: () => canFireResult,
+      onNudge: () => { nudgeCount++; },
+      onGoodbye: () => { goodbyeCount++; },
+    },
+    {
+      nudgeAfterQuestionMs: 500,
+      nudgeAfterStatementMs: 800,
+      goodbyeAfterMs: 500,
+      watchdogMs: 80,
+    },
+  );
+  m.startWatchdog();
+  await sleep(50);
+  m.resetWatchdog();
+  await sleep(50);
+  if (goodbyeCount !== 0) throw new Error(`Watchdog should not fire yet, got ${goodbyeCount} goodbye`);
+  await sleep(50);
+  if (goodbyeCount !== 1) throw new Error(`Watchdog should fire goodbye, got ${goodbyeCount}`);
+  if (m.currentState !== 'done') throw new Error(`Expected done, got ${m.currentState}`);
+  m.dispose();
+  console.log('  PASS: watchdog fires goodbye on inactivity');
+}
+
+async function testWatchdogRearmsWhenCanFireFalse() {
+  nudgeCount = 0;
+  goodbyeCount = 0;
+  canFireResult = false;
+  const m = new SilenceMonitor(
+    {
+      canFire: () => canFireResult,
+      onNudge: () => { nudgeCount++; },
+      onGoodbye: () => { goodbyeCount++; },
+    },
+    {
+      nudgeAfterQuestionMs: 500,
+      nudgeAfterStatementMs: 800,
+      goodbyeAfterMs: 500,
+      watchdogMs: 60,
+    },
+  );
+  m.startWatchdog();
+  await sleep(80);
+  if (goodbyeCount !== 0) throw new Error(`Watchdog should not fire when canFire=false, got ${goodbyeCount}`);
+  canFireResult = true;
+  await sleep(80);
+  if (goodbyeCount !== 1) throw new Error(`Watchdog should fire after canFire=true, got ${goodbyeCount}`);
+  m.dispose();
+  console.log('  PASS: watchdog re-arms when canFire is false');
+}
+
 async function main() {
   console.log('SilenceMonitor tests:');
   await testBasicNudgeThenGoodbye();
@@ -107,6 +163,8 @@ async function main() {
   await testCanFireGuardRearmsOnFalse();
   await testStatementUsesLongerDelay();
   await testDoneStateIgnoresArm();
+  await testWatchdogFiresGoodbyeOnInactivity();
+  await testWatchdogRearmsWhenCanFireFalse();
   console.log('All tests passed.');
 }
 

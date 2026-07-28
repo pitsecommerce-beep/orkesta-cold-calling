@@ -23,10 +23,12 @@ const NUDGE_PHRASES = [
 ];
 
 const GOODBYE_PHRASE = 'Bueno, parece que se cortó la comunicación. Fue un gusto, que tenga buen día.';
+const APOLOGY_PHRASE = 'Disculpe, estoy teniendo un problema técnico. Le pedimos una disculpa, un ejecutivo se comunicará con usted. Que tenga buen día.';
 
 const fillerCache = new Map<string, Buffer>();
 const nudgeCache = new Map<string, Buffer>();
 let goodbyeAudio: Buffer | null = null;
+let apologyAudio: Buffer | null = null;
 
 export async function warmFillerCache(): Promise<void> {
   if (!isConfigured('deepgram')) {
@@ -55,8 +57,14 @@ export async function warmFillerCache(): Promise<void> {
       .catch(err => console.error('[TTS] Failed to cache goodbye:', err)),
   );
 
+  promises.push(
+    synthesize(APOLOGY_PHRASE)
+      .then(audio => { apologyAudio = audio; })
+      .catch(err => console.error('[TTS] Failed to cache apology:', err)),
+  );
+
   await Promise.all(promises);
-  console.log(`[TTS] Cache warmed — fillers: ${fillerCache.size}/${FILLER_PHRASES.length}, nudges: ${nudgeCache.size}/${NUDGE_PHRASES.length}, goodbye: ${goodbyeAudio ? 'ok' : 'fail'}`);
+  console.log(`[TTS] Cache warmed — fillers: ${fillerCache.size}/${FILLER_PHRASES.length}, nudges: ${nudgeCache.size}/${NUDGE_PHRASES.length}, goodbye: ${goodbyeAudio ? 'ok' : 'fail'}, apology: ${apologyAudio ? 'ok' : 'fail'}`);
 }
 
 export function getRandomFiller(exclude?: string): { text: string; audio: Buffer } | null {
@@ -79,6 +87,10 @@ export function getRandomNudge(): { text: string; audio: Buffer } | null {
 
 export function getGoodbyeAudio(): Buffer | null {
   return goodbyeAudio;
+}
+
+export function getApologyAudio(): Buffer | null {
+  return apologyAudio;
 }
 
 export async function synthesize(text: string, signal?: AbortSignal, voiceOverride?: string): Promise<Buffer> {
