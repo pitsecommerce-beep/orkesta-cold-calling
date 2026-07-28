@@ -52,6 +52,7 @@
           <h1>Or<span style="opacity:0.6">x</span>esta <span class="subtitle">Cold Calling</span></h1>
         </div>
         <div class="header-right">
+          <button class="btn btn-small btn-test-call" id="test-call-btn">Probar agente</button>
           <span id="user-name"></span>
           <button class="btn btn-small" id="logout-btn">Salir</button>
         </div>
@@ -344,6 +345,40 @@
           <p id="upload-file-name" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem"></p>
           <button class="btn btn-primary" id="upload-submit-btn" disabled>Importar prospectos</button>
           <p class="error-msg" id="upload-error"></p>
+        </div>
+      </div>
+
+      <!-- Test Call Modal -->
+      <div id="test-call-modal" class="modal hidden">
+        <div class="modal-content">
+          <button class="modal-close" id="close-test-call-modal">&times;</button>
+          <h2>Probar agente</h2>
+          <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem">
+            Habla con el agente de voz directamente desde tu navegador, sin consumir minutos de Twilio.
+          </p>
+          <div id="test-call-setup">
+            <div class="form-group">
+              <label>Nombre del prospecto (simulado)</label>
+              <input type="text" id="test-prospect-name" value="Carlos Mart&iacute;nez" placeholder="Nombre del prospecto">
+            </div>
+            <div class="form-group">
+              <label>Campa&ntilde;a</label>
+              <select id="test-campaign-select">
+                <option value="">Sin campa&ntilde;a (predeterminada)</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="test-call-start-btn" style="width:100%">Iniciar prueba</button>
+          </div>
+          <div id="test-call-active" class="hidden">
+            <div class="test-call-status">
+              <span class="pulse-dot"></span>
+              <span id="test-call-timer">00:00</span>
+            </div>
+            <div id="test-call-transcript" class="test-transcript">
+              <p class="test-transcript-empty">Conectando con el agente...</p>
+            </div>
+            <button class="btn btn-danger" id="test-call-stop-btn" style="width:100%">Colgar</button>
+          </div>
         </div>
       </div>
 

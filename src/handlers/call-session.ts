@@ -14,7 +14,7 @@ import { VoicemailDetector } from '../pipeline/voicemail-detector';
 import { SilenceMonitor } from '../pipeline/silence-monitor';
 import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
-import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection } from '../models/types';
+import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection, Campaign } from '../models/types';
 import type { ConversationMessage } from '../services/llm';
 
 export class CallSession {
@@ -65,6 +65,9 @@ export class CallSession {
   private fillerTimer: NodeJS.Timeout | null = null;
   private pendingGoodbye = false;
   private pendingApology = false;
+  private testMode = false;
+  private testProspectName = '';
+  private onTranscript?: (speaker: 'agente' | 'prospecto', text: string) => void;
 
   constructor(ws: WebSocket, params: { prospectId: string; campaignId: string; ownerId: string }) {
     this.twilioWs = ws;
@@ -77,23 +80,45 @@ export class CallSession {
     this.playbackQueue = new PlaybackQueue();
   }
 
+  setTestMode(prospectName: string, onTranscript?: (speaker: 'agente' | 'prospecto', text: string) => void) {
+    this.testMode = true;
+    this.testProspectName = prospectName;
+    this.onTranscript = onTranscript;
+  }
+
   async initialize(streamSid: string, callSid: string) {
     this.streamSid = streamSid;
     this.callSid = callSid;
     this.playbackQueue.setTarget(this.twilioWs, streamSid);
 
-    console.log(`[CallSession] Initializing call ${callSid} for prospect ${this.prospectId}`);
+    console.log(`[CallSession] Initializing ${this.testMode ? 'test ' : ''}call ${callSid}`);
 
     try {
-      const [prospect, campaign] = await Promise.all([
-        db.getProspect(this.prospectId),
-        this.campaignId ? db.getCampaign(this.campaignId) : null,
-      ]);
+      let campaign: Campaign | null = null;
+      let prospectName = '';
+      let prospectCompany: string | undefined;
+      let prospectNotes: string | undefined;
 
-      if (!prospect) {
-        console.error('[CallSession] Prospect not found:', this.prospectId);
-        await this.hangup();
-        return;
+      if (this.testMode) {
+        prospectName = this.testProspectName;
+        campaign = this.campaignId ? await db.getCampaign(this.campaignId) : null;
+      } else {
+        const [prospect, camp] = await Promise.all([
+          db.getProspect(this.prospectId),
+          this.campaignId ? db.getCampaign(this.campaignId) : null,
+        ]);
+
+        if (!prospect) {
+          console.error('[CallSession] Prospect not found:', this.prospectId);
+          await this.hangup();
+          return;
+        }
+
+        campaign = camp;
+        prospectName = prospect.nombre;
+        prospectCompany = prospect.empresa || undefined;
+        prospectNotes = prospect.notas || undefined;
+        this.prospectPhone = prospect.telefono;
       }
 
       if (campaign?.voz_configurada) {
@@ -106,24 +131,24 @@ export class CallSession {
         this.toneAgente = campaign.tono_agente;
       }
 
-      this.prospectPhone = prospect.telefono;
+      if (!this.testMode) {
+        this.callId = await db.createCallRecord({
+          prospectId: this.prospectId,
+          campaignId: this.campaignId || null,
+          twilioCallSid: callSid,
+          ownerId: this.ownerId,
+        });
 
-      this.callId = await db.createCallRecord({
-        prospectId: this.prospectId,
-        campaignId: this.campaignId || null,
-        twilioCallSid: callSid,
-        ownerId: this.ownerId,
-      });
-
-      this.slotsPromise = this.preloadSlots();
+        this.slotsPromise = this.preloadSlots();
+      }
 
       const systemPrompt = llm.buildSystemPrompt({
         campaignObjective: campaign?.objetivo || 'Presentar los servicios de Orkesta y detectar interés.',
         businessContext: campaign?.contexto_negocio || 'Orkesta ofrece soluciones de IA para empresas.',
         customSystemPrompt: campaign?.system_prompt,
-        prospectName: prospect.nombre,
-        prospectCompany: prospect.empresa || undefined,
-        prospectNotes: prospect.notas || undefined,
+        prospectName,
+        prospectCompany,
+        prospectNotes,
         agentName: campaign?.nombre_agente || undefined,
         tone: this.toneAgente,
       });
@@ -140,11 +165,15 @@ export class CallSession {
         this.ttsStream = null;
       }
 
-      await db.updateProspectStatus(this.prospectId, 'contactado');
+      if (!this.testMode) {
+        await db.updateProspectStatus(this.prospectId, 'contactado');
+      }
 
       this.startAmbientAudio();
 
-      if (config.amdEnabled) {
+      if (this.testMode) {
+        setTimeout(() => this.sendGreeting(), 500);
+      } else if (config.amdEnabled) {
         this.amdTimeout = setTimeout(() => {
           if (!this.amdResolved && !this.disposed) {
             console.log('[CallSession] AMD timeout — greeting as safety net');
@@ -238,6 +267,13 @@ export class CallSession {
   }
 
   private async hangup() {
+    if (this.testMode) {
+      if (this.twilioWs.readyState === WebSocket.OPEN) {
+        this.twilioWs.send(JSON.stringify({ event: 'stop', streamSid: this.streamSid }));
+        this.twilioWs.close();
+      }
+      return;
+    }
     if (this.callSid) {
       await twilio.hangupCall(this.callSid);
     }
@@ -435,6 +471,7 @@ export class CallSession {
     });
 
     this.conversationHistory.push({ role: 'user', content: text });
+    this.onTranscript?.('prospecto', text);
 
     this.scheduleConditionalFiller();
 
@@ -573,6 +610,7 @@ export class CallSession {
           text: fullResponse,
           timestamp: new Date(),
         });
+        this.onTranscript?.('agente', fullResponse);
       }
 
       if (turnM) {
@@ -678,7 +716,9 @@ export class CallSession {
             ninguno: 'no_interesado',
           };
           const status = nivelMap[args.nivel] || 'contactado';
-          await db.updateProspectStatus(this.prospectId, status);
+          if (!this.testMode) {
+            await db.updateProspectStatus(this.prospectId, status);
+          }
           return JSON.stringify({ success: true, message: `Interés registrado: ${args.nivel}` });
         }
 
@@ -701,7 +741,7 @@ export class CallSession {
               disposition: dispMap[args.resultado] || 'pendiente',
             });
           }
-          if (args.resultado === 'pidio_no_llamar') {
+          if (args.resultado === 'pidio_no_llamar' && !this.testMode) {
             await db.updateProspectStatus(this.prospectId, 'descartado');
           }
           await this.hangup();
@@ -742,6 +782,15 @@ export class CallSession {
     email?: string;
     notas?: string;
   }): Promise<string> {
+    if (this.testMode) {
+      const slot = this.cachedSlots.find(s => s.id === args.slot_id);
+      return JSON.stringify({
+        success: true,
+        etiquetaHablada: slot?.etiquetaHablada || '',
+        mensaje: 'Cita registrada (modo prueba).',
+      });
+    }
+
     const slot = this.cachedSlots.find(s => s.id === args.slot_id);
 
     if (!slot) {

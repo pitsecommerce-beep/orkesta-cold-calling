@@ -774,5 +774,320 @@ if (window.location.search.includes('calendar=connected')) {
   window.history.replaceState({}, '', '/');
 }
 
+// ---- Test Call ----
+let testCallWs = null;
+let testCallAudioCtx = null;
+let testCallMediaStream = null;
+let testCallProcessor = null;
+let testCallSourceNode = null;
+let testCallAudioQueue = [];
+let testCallActiveSources = [];
+let testCallPlaybackTime = 0;
+let testCallTimerInterval = null;
+let testCallStartTime = null;
+let testCallActive = false;
+
+function linearToMulaw(sample) {
+  const BIAS = 0x84;
+  const CLIP = 32635;
+  let sign = 0;
+  if (sample < 0) { sign = 0x80; sample = -sample; }
+  if (sample > CLIP) sample = CLIP;
+  sample += BIAS;
+  let exponent = 7;
+  let mask = 0x4000;
+  while ((sample & mask) === 0 && exponent > 0) { exponent--; mask >>= 1; }
+  const mantissa = (sample >> (exponent + 3)) & 0x0F;
+  return ~(sign | (exponent << 4) | mantissa) & 0xFF;
+}
+
+function mulawToLinear(mulaw) {
+  const BIAS = 0x84;
+  mulaw = ~mulaw & 0xFF;
+  const sign = mulaw & 0x80;
+  const exponent = (mulaw >> 4) & 0x07;
+  const mantissa = mulaw & 0x0F;
+  let sample = ((mantissa << 3) + BIAS) << exponent;
+  sample -= BIAS;
+  return sign ? -sample : sample;
+}
+
+async function startTestCall() {
+  const campaignId = document.getElementById('test-campaign-select').value;
+  const prospectName = document.getElementById('test-prospect-name').value || 'Prospecto de prueba';
+  const btn = document.getElementById('test-call-start-btn');
+  btn.disabled = true;
+  btn.textContent = 'Conectando...';
+
+  try {
+    testCallAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (testCallAudioCtx.state === 'suspended') await testCallAudioCtx.resume();
+
+    testCallMediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const params = new URLSearchParams({ token, campaignId, prospectName });
+    testCallWs = new WebSocket(`${wsProtocol}//${location.host}/test-call?${params}`);
+
+    testCallWs.onopen = () => {
+      testCallActive = true;
+      document.getElementById('test-call-setup').classList.add('hidden');
+      document.getElementById('test-call-active').classList.remove('hidden');
+      document.getElementById('test-call-transcript').innerHTML =
+        '<p class="test-transcript-empty">Conectando con el agente...</p>';
+
+      testCallStartTime = Date.now();
+      testCallTimerInterval = setInterval(updateTestCallTimer, 1000);
+      startTestCallAudioCapture();
+    };
+
+    testCallWs.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        handleTestCallMessage(msg);
+      } catch (err) {
+        console.error('[TestCall] Parse error:', err);
+      }
+    };
+
+    testCallWs.onclose = () => {
+      if (testCallActive) stopTestCall(true);
+    };
+
+    testCallWs.onerror = () => {
+      showToast('Error de conexión en la prueba', 'error');
+      stopTestCall(true);
+    };
+  } catch (err) {
+    showToast('Error: ' + (err.message || 'No se pudo iniciar la prueba'), 'error');
+    cleanupTestCallAudio();
+    btn.disabled = false;
+    btn.textContent = 'Iniciar prueba';
+  }
+}
+
+function startTestCallAudioCapture() {
+  if (!testCallAudioCtx || !testCallMediaStream) return;
+
+  testCallSourceNode = testCallAudioCtx.createMediaStreamSource(testCallMediaStream);
+  testCallProcessor = testCallAudioCtx.createScriptProcessor(4096, 1, 1);
+
+  testCallSourceNode.connect(testCallProcessor);
+  testCallProcessor.connect(testCallAudioCtx.destination);
+
+  const sampleRate = testCallAudioCtx.sampleRate;
+  const ratio = sampleRate / 8000;
+
+  testCallProcessor.onaudioprocess = (e) => {
+    if (!testCallActive || !testCallWs || testCallWs.readyState !== WebSocket.OPEN) return;
+
+    const input = e.inputBuffer.getChannelData(0);
+    e.outputBuffer.getChannelData(0).fill(0);
+
+    const outLen = Math.floor(input.length / ratio);
+    const mulaw = new Uint8Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const sample = input[Math.round(i * ratio)];
+      const int16 = Math.max(-32768, Math.min(32767, Math.round(sample * 32768)));
+      mulaw[i] = linearToMulaw(int16);
+    }
+
+    for (let i = 0; i < mulaw.length; i += 160) {
+      const end = Math.min(i + 160, mulaw.length);
+      const frame = mulaw.subarray(i, end);
+      let binary = '';
+      for (let j = 0; j < frame.length; j++) binary += String.fromCharCode(frame[j]);
+      testCallWs.send(JSON.stringify({
+        event: 'media',
+        media: { payload: btoa(binary) },
+      }));
+    }
+  };
+}
+
+function handleTestCallMessage(msg) {
+  switch (msg.event) {
+    case 'media': {
+      const binary = atob(msg.media.payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      testCallAudioQueue.push(bytes);
+      break;
+    }
+    case 'mark':
+      scheduleTestCallPlayback(msg.mark.name);
+      break;
+    case 'clear':
+      clearTestCallPlayback();
+      break;
+    case 'stop':
+      stopTestCall(true);
+      break;
+    case 'transcript':
+      addTestCallTranscript(msg.speaker, msg.text);
+      break;
+  }
+}
+
+function scheduleTestCallPlayback(markName) {
+  if (!testCallAudioCtx) return;
+
+  if (testCallAudioQueue.length === 0) {
+    if (testCallWs && testCallWs.readyState === WebSocket.OPEN) {
+      testCallWs.send(JSON.stringify({ event: 'mark', mark: { name: markName } }));
+    }
+    return;
+  }
+
+  let totalLen = 0;
+  for (const chunk of testCallAudioQueue) totalLen += chunk.length;
+  const allMulaw = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const chunk of testCallAudioQueue) {
+    allMulaw.set(chunk, offset);
+    offset += chunk.length;
+  }
+  testCallAudioQueue = [];
+
+  const samples = new Float32Array(allMulaw.length);
+  for (let i = 0; i < allMulaw.length; i++) {
+    samples[i] = mulawToLinear(allMulaw[i]) / 32768;
+  }
+
+  const buffer = testCallAudioCtx.createBuffer(1, samples.length, 8000);
+  buffer.getChannelData(0).set(samples);
+
+  const source = testCallAudioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(testCallAudioCtx.destination);
+
+  const now = testCallAudioCtx.currentTime;
+  const startAt = Math.max(now, testCallPlaybackTime);
+  source.start(startAt);
+  testCallPlaybackTime = startAt + buffer.duration;
+
+  source.onended = () => {
+    const idx = testCallActiveSources.indexOf(source);
+    if (idx >= 0) testCallActiveSources.splice(idx, 1);
+    if (testCallWs && testCallWs.readyState === WebSocket.OPEN) {
+      testCallWs.send(JSON.stringify({ event: 'mark', mark: { name: markName } }));
+    }
+  };
+
+  testCallActiveSources.push(source);
+}
+
+function clearTestCallPlayback() {
+  for (const src of testCallActiveSources) {
+    src.onended = null;
+    try { src.stop(); } catch {}
+  }
+  testCallActiveSources = [];
+  testCallAudioQueue = [];
+  testCallPlaybackTime = 0;
+}
+
+function addTestCallTranscript(speaker, text) {
+  const container = document.getElementById('test-call-transcript');
+  const empty = container.querySelector('.test-transcript-empty');
+  if (empty) empty.remove();
+
+  const turn = document.createElement('div');
+  turn.className = 'test-transcript-turn';
+  turn.innerHTML =
+    '<span class="speaker ' + esc(speaker) + '">' +
+    (speaker === 'agente' ? 'Agente' : 'Tú') +
+    '</span>' +
+    '<p class="text">' + esc(text) + '</p>';
+  container.appendChild(turn);
+  container.scrollTop = container.scrollHeight;
+}
+
+function updateTestCallTimer() {
+  if (!testCallStartTime) return;
+  const elapsed = Math.floor((Date.now() - testCallStartTime) / 1000);
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  document.getElementById('test-call-timer').textContent =
+    m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+}
+
+function stopTestCall(fromServer) {
+  testCallActive = false;
+
+  if (!fromServer && testCallWs && testCallWs.readyState === WebSocket.OPEN) {
+    testCallWs.send(JSON.stringify({ event: 'stop' }));
+  }
+
+  if (testCallWs) {
+    testCallWs.onclose = null;
+    if (testCallWs.readyState === WebSocket.OPEN || testCallWs.readyState === WebSocket.CONNECTING) {
+      testCallWs.close();
+    }
+    testCallWs = null;
+  }
+
+  cleanupTestCallAudio();
+
+  if (testCallTimerInterval) {
+    clearInterval(testCallTimerInterval);
+    testCallTimerInterval = null;
+  }
+
+  document.getElementById('test-call-setup').classList.remove('hidden');
+  document.getElementById('test-call-active').classList.add('hidden');
+
+  const btn = document.getElementById('test-call-start-btn');
+  btn.disabled = false;
+  btn.textContent = 'Iniciar prueba';
+
+  if (fromServer) {
+    showToast('Prueba de agente finalizada', 'info');
+  }
+}
+
+function cleanupTestCallAudio() {
+  clearTestCallPlayback();
+
+  if (testCallProcessor) {
+    testCallProcessor.disconnect();
+    testCallProcessor = null;
+  }
+  if (testCallSourceNode) {
+    testCallSourceNode.disconnect();
+    testCallSourceNode = null;
+  }
+  if (testCallMediaStream) {
+    testCallMediaStream.getTracks().forEach(function(t) { t.stop(); });
+    testCallMediaStream = null;
+  }
+  if (testCallAudioCtx) {
+    testCallAudioCtx.close().catch(function() {});
+    testCallAudioCtx = null;
+  }
+}
+
+document.getElementById('test-call-btn').addEventListener('click', function() {
+  var select = document.getElementById('test-campaign-select');
+  select.innerHTML = '<option value="">Sin campaña (predeterminada)</option>' +
+    campaigns.filter(function(c) { return c.activa; })
+      .map(function(c) { return '<option value="' + c.id + '">' + esc(c.nombre) + '</option>'; })
+      .join('');
+
+  document.getElementById('test-call-setup').classList.remove('hidden');
+  document.getElementById('test-call-active').classList.add('hidden');
+  document.getElementById('test-call-modal').classList.remove('hidden');
+});
+
+document.getElementById('close-test-call-modal').addEventListener('click', function() {
+  if (testCallActive) stopTestCall();
+  document.getElementById('test-call-modal').classList.add('hidden');
+});
+
+document.getElementById('test-call-start-btn').addEventListener('click', startTestCall);
+document.getElementById('test-call-stop-btn').addEventListener('click', function() { stopTestCall(); });
+
 // ---- Init ----
 checkAuth();
