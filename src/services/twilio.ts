@@ -31,6 +31,13 @@ export async function initiateCall(params: {
     record: true,
     recordingStatusCallback: `${config.publicBaseUrl}/api/twilio/recording`,
     recordingStatusCallbackMethod: 'POST',
+    ...(config.amdEnabled ? {
+      machineDetection: 'Enable' as const,
+      machineDetectionTimeout: 5,
+      asyncAmd: 'true',
+      asyncAmdStatusCallback: `${config.publicBaseUrl}/api/twilio/amd`,
+      asyncAmdStatusCallbackMethod: 'POST' as const,
+    } : {}),
   });
 
   return call.sid;
