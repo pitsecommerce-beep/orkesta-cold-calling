@@ -31,6 +31,7 @@ app.get('/health', (_req, res) => {
       deepgram: isConfigured('deepgram'),
       openai: isConfigured('openai'),
       supabase: isConfigured('supabase'),
+      google_calendar: isConfigured('google'),
     },
     missingEnvVars: missing.length > 0 ? missing : undefined,
   });
@@ -77,6 +78,7 @@ async function start() {
     console.warn(`   Deepgram: ${isConfigured('deepgram') ? '✅' : '❌ (STT/TTS no funcionarán)'}`);
     console.warn(`   OpenAI:   ${isConfigured('openai') ? '✅' : '❌ (conversación IA no funcionará)'}`);
     console.warn(`   Supabase: ${isConfigured('supabase') ? '✅' : '❌ (auth y BD no funcionarán)'}`);
+    console.warn(`   Calendar: ${isConfigured('google') ? '✅' : '⚠️  (citas se guardarán como tentativas)'}`);
     console.warn('');
     console.warn('   El panel web seguirá cargando. Configura las variables faltantes');
     console.warn('   para habilitar todas las funciones.');

@@ -64,6 +64,7 @@ export class CallSession {
   private lastFillerUsed: string | undefined;
   private fillerTimer: NodeJS.Timeout | null = null;
   private pendingGoodbye = false;
+  private pendingApology = false;
 
   constructor(ws: WebSocket, params: { prospectId: string; campaignId: string; ownerId: string }) {
     this.twilioWs = ws;
@@ -215,8 +216,18 @@ export class CallSession {
         nudgeAfterQuestionMs: config.silenceNudgeAfterQuestionMs,
         nudgeAfterStatementMs: config.silenceNudgeAfterStatementMs,
         goodbyeAfterMs: config.silenceGoodbyeAfterMs,
+        watchdogMs: config.silenceWatchdogMs,
       },
     );
+    this.silenceMonitor.startWatchdog();
+  }
+
+  private async finalizeApology() {
+    this.skipReport = true;
+    if (this.callId) {
+      await db.updateCallRecord(this.callId, { outcome: 'error' });
+    }
+    await this.hangup();
   }
 
   private async finalizeGoodbye() {
@@ -234,34 +245,58 @@ export class CallSession {
 
   private async connectSTT() {
     this.stt = new DeepgramSTT({
-      onStartOfTurn: () => {
+      onStartOfTurn: (transcript: string) => {
         this.silenceMonitor?.disarm();
-        if (this.isAgentSpeaking) {
+        this.silenceMonitor?.resetWatchdog();
+        if (this.isAgentSpeaking && transcript) {
           this.handleBargeIn();
         }
       },
       onTurnEnd: (text) => {
+        this.silenceMonitor?.resetWatchdog();
         this.handleTurnComplete(text).catch((err) =>
           console.error('[CallSession] Turn complete error:', err),
         );
       },
       onProspectActivity: () => {
         this.silenceMonitor?.prospectActivity();
+        this.silenceMonitor?.resetWatchdog();
       },
       onError: (err) => console.error('[CallSession] STT error:', err),
       onClose: () => {
         console.log('[CallSession] STT closed');
-        if (!this.disposed) {
-          console.log('[CallSession] Reconnecting STT...');
-          this.connectSTT().catch((err) =>
-            console.error('[CallSession] STT reconnect failed:', err),
-          );
-        }
+      },
+      onFatalError: (err) => {
+        console.error('[CallSession] STT fatal error:', err);
+        this.handleSTTFatalError().catch((e) =>
+          console.error('[CallSession] Fatal error handler failed:', e),
+        );
       },
     });
 
     await this.stt.connect();
     console.log('[CallSession] STT connected');
+  }
+
+  private async handleSTTFatalError() {
+    if (this.disposed) return;
+
+    this.silenceMonitor?.dispose();
+
+    const apology = tts.getApologyAudio();
+    if (apology && this.streamSid) {
+      this.isAgentSpeaking = true;
+      this.stopAmbientAudio();
+      this.pendingApology = true;
+      this.playbackQueue.sendAudio(apology);
+      this.playbackQueue.sendMark();
+    } else {
+      this.skipReport = true;
+      if (this.callId) {
+        await db.updateCallRecord(this.callId, { outcome: 'error' });
+      }
+      await this.hangup();
+    }
   }
 
   private async sendGreeting() {
@@ -322,6 +357,12 @@ export class CallSession {
     if (!this.playbackQueue.isPlaying) {
       this.isAgentSpeaking = false;
 
+      if (this.pendingApology) {
+        this.pendingApology = false;
+        this.finalizeApology();
+        return;
+      }
+
       if (this.pendingGoodbye) {
         this.pendingGoodbye = false;
         this.finalizeGoodbye();
@@ -361,7 +402,6 @@ export class CallSession {
     this.playbackQueue.resetTracking();
     this.phraseQueue.length = 0;
     this.phraseChunker.reset();
-    this.stt?.resetTurnBuffer();
 
     if (this.fillerTimer) {
       clearTimeout(this.fillerTimer);
