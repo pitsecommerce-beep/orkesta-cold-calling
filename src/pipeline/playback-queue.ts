@@ -11,6 +11,8 @@ export class PlaybackQueue {
   private drainId = 0;
   private ws: WebSocket | null = null;
   private streamSid: string | null = null;
+  private markTexts = new Map<string, string>();
+  private confirmedTexts: string[] = [];
 
   get isPlaying(): boolean {
     return this.pendingMarks.size > 0 || this.frameQueue.length > 0;
@@ -29,10 +31,13 @@ export class PlaybackQueue {
     this.startDrain();
   }
 
-  sendMark(): string {
+  sendMark(text?: string): string {
     this.markCounter++;
     const markName = `phrase_${this.markCounter}`;
     this.pendingMarks.add(markName);
+    if (text) {
+      this.markTexts.set(markName, text);
+    }
     this.frameQueue.push({ type: 'mark', name: markName });
     this.startDrain();
     return markName;
@@ -40,6 +45,20 @@ export class PlaybackQueue {
 
   handleMarkReceived(markName: string) {
     this.pendingMarks.delete(markName);
+    const text = this.markTexts.get(markName);
+    if (text) {
+      this.confirmedTexts.push(text);
+      this.markTexts.delete(markName);
+    }
+  }
+
+  getConfirmedText(): string {
+    return this.confirmedTexts.join(' ');
+  }
+
+  resetTracking() {
+    this.markTexts.clear();
+    this.confirmedTexts = [];
   }
 
   sendClear() {
@@ -50,6 +69,7 @@ export class PlaybackQueue {
       this.ws.send(JSON.stringify({ event: 'clear', streamSid: this.streamSid }));
     }
     this.pendingMarks.clear();
+    this.markTexts.clear();
   }
 
   reset() {
@@ -57,6 +77,8 @@ export class PlaybackQueue {
     this.pendingMarks.clear();
     this.draining = false;
     this.drainId++;
+    this.markTexts.clear();
+    this.confirmedTexts = [];
   }
 
   private startDrain() {

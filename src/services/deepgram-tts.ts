@@ -8,34 +8,77 @@ const FILLER_PHRASES = [
   'Perfecto...',
   'Entiendo...',
   'Muy bien...',
+  'Ok...',
+  'Ajá...',
+  'Sale...',
+  'Déjeme checar...',
+  'Mire...',
+  'Va, va...',
 ];
 
+const NUDGE_PHRASES = [
+  '¿Bueno?',
+  '¿Sigue ahí?',
+  '¿Me alcanza a escuchar?',
+];
+
+const GOODBYE_PHRASE = 'Bueno, parece que se cortó la comunicación. Fue un gusto, que tenga buen día.';
+
 const fillerCache = new Map<string, Buffer>();
+const nudgeCache = new Map<string, Buffer>();
+let goodbyeAudio: Buffer | null = null;
 
 export async function warmFillerCache(): Promise<void> {
   if (!isConfigured('deepgram')) {
     console.warn('[TTS] ⚠️  DEEPGRAM_API_KEY no configurada — fillers deshabilitados');
     return;
   }
-  console.log('[TTS] Warming filler cache...');
-  const promises = FILLER_PHRASES.map(async (phrase) => {
+  console.log('[TTS] Warming filler + nudge + goodbye cache...');
+
+  const all: Array<{ phrase: string; target: Map<string, Buffer> }> = [
+    ...FILLER_PHRASES.map(phrase => ({ phrase, target: fillerCache })),
+    ...NUDGE_PHRASES.map(phrase => ({ phrase, target: nudgeCache })),
+  ];
+
+  const promises = all.map(async ({ phrase, target }) => {
     try {
       const audio = await synthesize(phrase);
-      fillerCache.set(phrase, audio);
-      console.log(`[TTS] Cached filler: "${phrase}" (${audio.length} bytes)`);
+      target.set(phrase, audio);
     } catch (err) {
-      console.error(`[TTS] Failed to cache filler "${phrase}":`, err);
+      console.error(`[TTS] Failed to cache "${phrase}":`, err);
     }
   });
+
+  promises.push(
+    synthesize(GOODBYE_PHRASE)
+      .then(audio => { goodbyeAudio = audio; })
+      .catch(err => console.error('[TTS] Failed to cache goodbye:', err)),
+  );
+
   await Promise.all(promises);
-  console.log(`[TTS] Filler cache warmed: ${fillerCache.size}/${FILLER_PHRASES.length}`);
+  console.log(`[TTS] Cache warmed — fillers: ${fillerCache.size}/${FILLER_PHRASES.length}, nudges: ${nudgeCache.size}/${NUDGE_PHRASES.length}, goodbye: ${goodbyeAudio ? 'ok' : 'fail'}`);
 }
 
-export function getRandomFiller(): { text: string; audio: Buffer } | null {
+export function getRandomFiller(exclude?: string): { text: string; audio: Buffer } | null {
   if (fillerCache.size === 0) return null;
-  const entries = Array.from(fillerCache.entries());
+  let entries = Array.from(fillerCache.entries());
+  if (exclude) {
+    entries = entries.filter(([text]) => text !== exclude);
+  }
+  if (entries.length === 0) return null;
   const [text, audio] = entries[Math.floor(Math.random() * entries.length)];
   return { text, audio };
+}
+
+export function getRandomNudge(): { text: string; audio: Buffer } | null {
+  if (nudgeCache.size === 0) return null;
+  const entries = Array.from(nudgeCache.entries());
+  const [text, audio] = entries[Math.floor(Math.random() * entries.length)];
+  return { text, audio };
+}
+
+export function getGoodbyeAudio(): Buffer | null {
+  return goodbyeAudio;
 }
 
 export async function synthesize(text: string, signal?: AbortSignal, voiceOverride?: string): Promise<Buffer> {

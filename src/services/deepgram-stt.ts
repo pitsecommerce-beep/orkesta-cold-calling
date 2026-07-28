@@ -4,6 +4,7 @@ import { config, isConfigured } from '../config';
 export interface STTCallbacks {
   onTurnEnd: (text: string) => void;
   onStartOfTurn: () => void;
+  onProspectActivity?: () => void;
   onInterimTranscript?: (text: string) => void;
   onError: (error: Error) => void;
   onClose: () => void;
@@ -106,6 +107,7 @@ export class DeepgramSTT {
         break;
 
       case 'Update':
+        this.callbacks.onProspectActivity?.();
         break;
     }
   }
