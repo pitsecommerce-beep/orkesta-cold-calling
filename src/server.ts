@@ -11,6 +11,7 @@ import { callsRouter } from './routes/calls';
 import { twilioRouter } from './routes/twilio-webhooks';
 import { calendarRouter } from './routes/calendar';
 import { handleMediaStream } from './handlers/media-stream';
+import { handleTestCall } from './handlers/test-call';
 import { warmFillerCache } from './services/deepgram-tts';
 
 const app = express();
@@ -58,6 +59,10 @@ server.on('upgrade', (request, socket, head) => {
   if (pathname === '/media-stream') {
     wss.handleUpgrade(request, socket, head, (ws) => {
       handleMediaStream(ws);
+    });
+  } else if (pathname === '/test-call') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      handleTestCall(ws, request);
     });
   } else {
     socket.destroy();

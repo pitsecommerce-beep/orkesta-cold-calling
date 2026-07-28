@@ -911,6 +911,96 @@ header {
 }
 
 /* ═══════════════════════════════════════
+   Test Call
+   ═══════════════════════════════════════ */
+
+.btn-test-call {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%) !important;
+  border: 1px solid rgba(99, 102, 241, 0.3) !important;
+  color: var(--primary-light) !important;
+}
+
+.btn-test-call:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(139, 92, 246, 0.25) 100%) !important;
+  border-color: var(--primary-light) !important;
+}
+
+.test-call-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(52, 211, 153, 0.08);
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  border: 1px solid rgba(52, 211, 153, 0.2);
+}
+
+.pulse-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+  animation: pulseDot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.4); }
+  50% { opacity: 0.8; transform: scale(1.2); box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+}
+
+#test-call-timer {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--success);
+}
+
+.test-transcript {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: rgba(17, 16, 25, 0.5);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.88rem;
+  min-height: 80px;
+}
+
+.test-transcript-turn {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  animation: slideUp 0.2s ease-out;
+}
+
+.test-transcript-turn:last-child { border-bottom: none; }
+
+.test-transcript-turn .speaker {
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.test-transcript-turn .speaker.agente { color: var(--primary-light); }
+.test-transcript-turn .speaker.prospecto { color: var(--success); }
+
+.test-transcript-turn .text {
+  margin-top: 0.15rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.test-transcript-empty {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 1.5rem 0;
+  font-size: 0.85rem;
+}
+
+/* ═══════════════════════════════════════
    Scrollbar
    ═══════════════════════════════════════ */
 
