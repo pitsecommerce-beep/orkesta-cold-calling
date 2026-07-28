@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import * as twilioService from '../services/twilio';
 import { supabaseAdmin } from '../services/supabase';
+import { getSessionByCallSid } from '../handlers/media-stream';
 
 export const twilioRouter = Router();
 
@@ -43,6 +44,52 @@ twilioRouter.post('/status', async (req: Request, res: Response) => {
     } catch (err) {
       console.error('[Twilio] Status update error:', err);
     }
+  }
+
+  res.sendStatus(200);
+});
+
+twilioRouter.post('/amd', async (req: Request, res: Response) => {
+  const { CallSid, AnsweredBy } = req.body;
+
+  console.log(`[Twilio] AMD verdict — SID: ${CallSid}, answeredBy: ${AnsweredBy}`);
+
+  try {
+    await supabaseAdmin
+      .from('calls')
+      .update({ amd_result: AnsweredBy })
+      .eq('twilio_call_sid', CallSid);
+
+    const isHuman = AnsweredBy === 'human';
+    const isMachine = AnsweredBy === 'machine_start';
+    const isFax = AnsweredBy === 'fax';
+
+    if (isMachine) {
+      await supabaseAdmin
+        .from('calls')
+        .update({ outcome: 'buzon', disposition: 'sin_decision' })
+        .eq('twilio_call_sid', CallSid);
+    } else if (isFax) {
+      await supabaseAdmin
+        .from('calls')
+        .update({ outcome: 'error' })
+        .eq('twilio_call_sid', CallSid);
+    }
+
+    const session = getSessionByCallSid(CallSid);
+    if (session) {
+      session.onAmdVerdict(AnsweredBy);
+      if (!isHuman && AnsweredBy !== 'unknown') {
+        await twilioService.hangupCall(CallSid);
+      }
+    } else {
+      console.warn(`[Twilio] AMD — no active session for ${CallSid}`);
+      if (!isHuman && AnsweredBy !== 'unknown') {
+        await twilioService.hangupCall(CallSid);
+      }
+    }
+  } catch (err) {
+    console.error('[Twilio] AMD callback error:', err);
   }
 
   res.sendStatus(200);

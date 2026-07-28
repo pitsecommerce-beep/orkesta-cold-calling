@@ -2,9 +2,16 @@ import WebSocket from 'ws';
 import { CallSession } from './call-session';
 
 const activeSessions = new Map<string, CallSession>();
+const sessionsByCallSid = new Map<string, CallSession>();
+
+export function getSessionByCallSid(callSid: string): CallSession | undefined {
+  return sessionsByCallSid.get(callSid);
+}
 
 export function handleMediaStream(ws: WebSocket) {
   let session: CallSession | null = null;
+  let streamSid: string | null = null;
+  let callSid: string | null = null;
 
   ws.on('message', async (data) => {
     try {
@@ -16,7 +23,9 @@ export function handleMediaStream(ws: WebSocket) {
           break;
 
         case 'start': {
-          const { streamSid, callSid, customParameters } = msg.start;
+          streamSid = msg.start.streamSid;
+          callSid = msg.start.callSid;
+          const { customParameters } = msg.start;
           const params = {
             prospectId: customParameters?.prospectId || '',
             campaignId: customParameters?.campaignId || '',
@@ -26,8 +35,9 @@ export function handleMediaStream(ws: WebSocket) {
           console.log(`[MediaStream] Start — stream: ${streamSid}, call: ${callSid}`);
 
           session = new CallSession(ws, params);
-          await session.initialize(streamSid, callSid);
-          activeSessions.set(streamSid, session);
+          activeSessions.set(streamSid!, session);
+          sessionsByCallSid.set(callSid!, session);
+          await session.initialize(streamSid!, callSid!);
           break;
         }
 
@@ -40,10 +50,11 @@ export function handleMediaStream(ws: WebSocket) {
           break;
 
         case 'stop': {
-          const streamSid = msg.stop?.streamSid || msg.streamSid;
-          console.log(`[MediaStream] Stop — stream: ${streamSid}`);
+          const sid = msg.stop?.streamSid || msg.streamSid;
+          console.log(`[MediaStream] Stop — stream: ${sid}`);
           await session?.cleanup();
-          if (streamSid) activeSessions.delete(streamSid);
+          if (sid) activeSessions.delete(sid);
+          if (callSid) sessionsByCallSid.delete(callSid);
           break;
         }
       }
@@ -57,6 +68,8 @@ export function handleMediaStream(ws: WebSocket) {
     if (session) {
       await session.cleanup();
     }
+    if (streamSid) activeSessions.delete(streamSid);
+    if (callSid) sessionsByCallSid.delete(callSid);
   });
 
   ws.on('error', (err) => {

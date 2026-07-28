@@ -10,6 +10,7 @@ import { computeAvailableSlots, filterSlotsByPreference, selectVendedor } from '
 import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
 import { MetricsCollector, TurnMetrics } from '../pipeline/turn-metrics';
+import { VoicemailDetector } from '../pipeline/voicemail-detector';
 import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection } from '../models/types';
@@ -46,6 +47,11 @@ export class CallSession {
   private slotsPromise: Promise<void> | null = null;
   private calendarConnection: CalendarConnection | null = null;
   private prospectPhone: string | null = null;
+
+  private amdResolved = false;
+  private amdTimeout: NodeJS.Timeout | null = null;
+  private skipReport = false;
+  private voicemailDetector = new VoicemailDetector();
 
   private processingResponse = false;
   private ambientInterval: NodeJS.Timeout | null = null;
@@ -135,7 +141,17 @@ export class CallSession {
 
       this.startAmbientAudio();
 
-      setTimeout(() => this.sendGreeting(), 500);
+      if (config.amdEnabled) {
+        this.amdTimeout = setTimeout(() => {
+          if (!this.amdResolved && !this.disposed) {
+            console.log('[CallSession] AMD timeout — greeting as safety net');
+            this.amdResolved = true;
+            this.sendGreeting();
+          }
+        }, 3500);
+      } else {
+        setTimeout(() => this.sendGreeting(), 500);
+      }
     } catch (err) {
       console.error('[CallSession] Initialize error:', err);
     }
@@ -242,6 +258,39 @@ export class CallSession {
     this.resetSilenceTimer();
   }
 
+  onAmdVerdict(answeredBy: string) {
+    if (this.disposed) return;
+
+    if (this.amdTimeout) {
+      clearTimeout(this.amdTimeout);
+      this.amdTimeout = null;
+    }
+
+    const isHuman = answeredBy === 'human' || answeredBy === 'unknown';
+    const isMachine = answeredBy === 'machine_start' || answeredBy === 'fax';
+
+    if (this.amdResolved) {
+      if (isMachine && this.greetingSent) {
+        console.log(`[CallSession] Late AMD verdict "${answeredBy}" — hanging up`);
+        this.skipReport = true;
+        this.hangup();
+      }
+      return;
+    }
+
+    this.amdResolved = true;
+
+    if (isHuman) {
+      console.log(`[CallSession] AMD: human — sending greeting`);
+      this.sendGreeting();
+    } else {
+      console.log(`[CallSession] AMD: ${answeredBy} — silent cleanup`);
+      this.skipReport = true;
+      this.hangup();
+      this.cleanup();
+    }
+  }
+
   handleMedia(payload: string) {
     if (!this.stt || this.disposed) return;
     const audioBuffer = Buffer.from(payload, 'base64');
@@ -276,6 +325,16 @@ export class CallSession {
 
   private async handleTurnComplete(text: string) {
     if (this.disposed || !text.trim()) return;
+
+    if (this.voicemailDetector.check(text)) {
+      console.log(`[CallSession] Voicemail detected by local patterns: "${text}"`);
+      this.skipReport = true;
+      if (this.callId) {
+        await db.updateCallRecord(this.callId, { outcome: 'buzon', disposition: 'sin_decision' });
+      }
+      await this.hangup();
+      return;
+    }
 
     const turnM = this.metrics.startTurn();
 
@@ -752,6 +811,12 @@ export class CallSession {
       clearTimeout(this.silenceTimer);
       this.silenceTimer = null;
     }
+    if (this.amdTimeout) {
+      clearTimeout(this.amdTimeout);
+      this.amdTimeout = null;
+    }
+
+    this.voicemailDetector.dispose();
 
     if (this.currentAbort) {
       this.currentAbort.abort();
@@ -781,11 +846,13 @@ export class CallSession {
 
         await db.saveTranscripts(this.callId, this.turns);
 
-        if (this.turns.length > 0) {
+        if (this.turns.length > 0 && !this.skipReport) {
           console.log('[CallSession] Generating call report...');
           const report = await llm.generateCallReport(this.turns, this.llmModel);
           await db.saveCallReport(this.callId, report);
           console.log('[CallSession] Report saved');
+        } else if (this.skipReport) {
+          console.log('[CallSession] Skipping report (voicemail/machine)');
         }
       } catch (err) {
         console.error('[CallSession] Cleanup save error:', err);

@@ -1,0 +1,15 @@
+export const VOICEMAIL_PATTERNS: string[] = [
+  'deje su mensaje',
+  'despues del tono',
+  'buzon de voz',
+  'no se encuentra disponible',
+  'no esta disponible',
+  'el numero que usted marco',
+  'se encuentra fuera del area de servicio',
+  'marque la extension',
+  'gracias por llamar a',
+  'su llamada es muy importante',
+  'en este momento no podemos atenderle',
+  'grabe su mensaje',
+  'al terminar cuelgue',
+];

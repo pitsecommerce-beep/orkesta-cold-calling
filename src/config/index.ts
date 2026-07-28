@@ -61,6 +61,7 @@ export const config = {
 
   endpointingMs: parseInt(optional('ENDPOINTING_MS', '500'), 10),
   enableFillerPhrases: process.env.ENABLE_FILLER_PHRASES !== 'false',
+  amdEnabled: process.env.AMD_ENABLED !== 'false',
 };
 
 export function getMissingVars(): string[] {
