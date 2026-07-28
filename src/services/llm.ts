@@ -36,16 +36,31 @@ export interface ToolDefinition {
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
-    name: 'agendar_cita',
-    description: 'Agendar una cita o reunión con el prospecto',
+    name: 'consultar_disponibilidad',
+    description: 'Consulta los horarios reales disponibles para la demo. Úsala SIEMPRE antes de proponer cualquier día u hora. Nunca inventes horarios.',
     parameters: {
       type: 'object',
       properties: {
-        fecha: { type: 'string', description: 'Fecha propuesta (YYYY-MM-DD)' },
-        hora: { type: 'string', description: 'Hora propuesta (HH:MM)' },
+        preferencia: {
+          type: 'string',
+          description: 'Preferencia del prospecto si la mencionó, por ejemplo "en la mañana", "el viernes", "mañana"',
+        },
+      },
+    },
+  },
+  {
+    name: 'agendar_cita',
+    description: 'Agenda la demo. Úsala solo después de que el prospecto haya confirmado en voz alta un horario que tú le ofreciste con consultar_disponibilidad.',
+    parameters: {
+      type: 'object',
+      properties: {
+        slot_id: { type: 'string', description: 'ID del slot elegido por el prospecto' },
+        nombre_contacto: { type: 'string', description: 'Nombre completo del contacto para la cita' },
+        telefono_confirmacion: { type: 'string', description: 'Teléfono para enviar confirmación (si es diferente al de la llamada)' },
+        email: { type: 'string', description: 'Email del contacto si lo proporcionó' },
         notas: { type: 'string', description: 'Notas adicionales sobre la cita' },
       },
-      required: ['fecha', 'hora'],
+      required: ['slot_id', 'nombre_contacto'],
     },
   },
   {
@@ -124,8 +139,14 @@ ${params.prospectNotes ? `- Notas previas: ${params.prospectNotes}` : ''}`.trim(
     ? `\n## Tono de la conversación\n${toneInstruction}`
     : '';
 
+  const schedulingBlock = `
+## Reglas para agendar citas
+- Nunca propongas un día ni una hora que no venga de consultar_disponibilidad. Ofrece siempre dos opciones concretas, nunca preguntes abierto.
+- Cuando el prospecto elija, repite el día y la hora en voz alta antes de agendar.
+- Si consultar_disponibilidad devuelve sin_calendario, agenda de la forma tradicional preguntando al prospecto su disponibilidad y avisándole que un vendedor confirmará.`;
+
   if (params.customSystemPrompt) {
-    return `${params.customSystemPrompt}\n\n${agentNameBlock}${toneBlock}\n\n${prospectBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
+    return `${params.customSystemPrompt}\n\n${agentNameBlock}${toneBlock}\n\n${prospectBlock}\n${schedulingBlock}\n\n## Idioma\nIMPORTANTE: Habla SIEMPRE en español mexicano. Todas tus respuestas deben ser en español.`;
   }
 
   return `Eres un agente de ventas profesional de Orkesta, una empresa mexicana de soluciones de inteligencia artificial. Tu slogan es "AI Solutions Orchestrated".
@@ -162,6 +183,8 @@ ${toneBlock}
 - Si logras agendar una cita, usa agendar_cita.
 - Cuando sea natural, registra el interés con registrar_interes.
 - Al despedirte, siempre usa finalizar_llamada con el resultado apropiado.
+- Nunca propongas un día ni una hora que no venga de consultar_disponibilidad. Ofrece siempre dos opciones concretas, nunca preguntes abierto. Cuando el prospecto elija, repite el día y la hora en voz alta antes de agendar.
+- Si consultar_disponibilidad devuelve sin_calendario, agenda de la forma tradicional preguntando al prospecto su disponibilidad y avisándole que un vendedor confirmará.
 - Cuando necesites pensar una respuesta compleja o el prospecto haga una pregunta que requiera elaboración, di algo breve como "Déjeme checarlo rápido" o "Permítame un momento" y usa consultar_sistema. El prospecto escuchará que tecleas, como un vendedor real consultando su computadora. Esto es MUCHO mejor que repetir muletillas como "entiendo", "claro", "perfecto" una y otra vez.
 - EVITA repetir la misma palabra de relleno. No digas "entiendo" más de una vez en toda la conversación. Varía: "ok", "claro", "ajá", "muy bien", "sale".
 

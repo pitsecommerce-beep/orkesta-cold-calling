@@ -4,13 +4,16 @@ import * as tts from '../services/deepgram-tts';
 import * as llm from '../services/llm';
 import * as db from '../services/supabase';
 import * as twilio from '../services/twilio';
+import * as gcal from '../services/google-calendar';
+import { computeAvailableSlots, filterSlotsByPreference, selectVendedor } from '../services/scheduling';
 import { TurnDetector, TurnCompleteEvent } from '../pipeline/turn-detector';
 import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
 import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
-import type { ConversationTurn, CallDisposition, ProspectStatus } from '../models/types';
+import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection } from '../models/types';
 import type { ConversationMessage } from '../services/llm';
+import type { FreeBusyBlock } from '../services/google-calendar';
 
 export class CallSession {
   private twilioWs: WebSocket;
@@ -36,6 +39,12 @@ export class CallSession {
   private ttsVoice: string | undefined;
   private llmModel: string | undefined;
   private toneAgente: string | undefined;
+
+  private cachedSlots: Slot[] = [];
+  private slotsReady = false;
+  private slotsPromise: Promise<void> | null = null;
+  private calendarConnection: CalendarConnection | null = null;
+  private prospectPhone: string | null = null;
 
   private processingResponse = false;
   private ambientInterval: NodeJS.Timeout | null = null;
@@ -94,12 +103,16 @@ export class CallSession {
         this.toneAgente = campaign.tono_agente;
       }
 
+      this.prospectPhone = prospect.telefono;
+
       this.callId = await db.createCallRecord({
         prospectId: this.prospectId,
         campaignId: this.campaignId || null,
         twilioCallSid: callSid,
         ownerId: this.ownerId,
       });
+
+      this.slotsPromise = this.preloadSlots();
 
       const systemPrompt = llm.buildSystemPrompt({
         campaignObjective: campaign?.objetivo || 'Presentar los servicios de Orkesta y detectar interés.',
@@ -432,23 +445,41 @@ export class CallSession {
     this.playbackQueue.sendMark();
   }
 
+  private async preloadSlots(): Promise<void> {
+    try {
+      const conn = await selectVendedor(this.ownerId, undefined);
+      if (!conn) {
+        console.log('[CallSession] No calendar connection — slots not preloaded');
+        return;
+      }
+
+      this.calendarConnection = conn;
+
+      const now = new Date();
+      const fiveDaysOut = new Date(now.getTime() + 6 * 24 * 3600_000);
+
+      const freeBusy = await gcal.getFreeBusy(conn, now.toISOString(), fiveDaysOut.toISOString());
+      this.cachedSlots = computeAvailableSlots(conn, freeBusy, now, 5);
+      this.slotsReady = true;
+
+      console.log(`[CallSession] Preloaded ${this.cachedSlots.length} slots for owner ${this.ownerId}`);
+    } catch (err) {
+      console.warn('[CallSession] Slot preload failed (will fall back to text mode):', err);
+      this.slotsReady = false;
+    }
+  }
+
   private async executeToolCall(name: string, argsJson: string): Promise<string> {
     try {
       const args = JSON.parse(argsJson);
       console.log(`[CallSession] Tool call: ${name}`, args);
 
       switch (name) {
-        case 'agendar_cita': {
-          if (this.callId) {
-            await db.updateCallRecord(this.callId, {
-              disposition: 'agendo',
-              next_action: `Cita agendada: ${args.fecha} ${args.hora}`,
-              next_action_date: args.fecha,
-            });
-            await db.updateProspectStatus(this.prospectId, 'agendado');
-          }
-          return JSON.stringify({ success: true, message: `Cita agendada para ${args.fecha} a las ${args.hora}` });
-        }
+        case 'consultar_disponibilidad':
+          return this.handleConsultarDisponibilidad(args.preferencia);
+
+        case 'agendar_cita':
+          return await this.handleAgendarCita(args);
 
         case 'registrar_interes': {
           const nivelMap: Record<string, ProspectStatus> = {
@@ -495,6 +526,196 @@ export class CallSession {
       console.error('[CallSession] Tool execution error:', err);
       return JSON.stringify({ error: 'Error ejecutando herramienta' });
     }
+  }
+
+  private handleConsultarDisponibilidad(preferencia?: string): string {
+    if (!this.slotsReady || this.cachedSlots.length === 0) {
+      return JSON.stringify({ status: 'sin_calendario' });
+    }
+
+    let slots = this.cachedSlots;
+    if (preferencia) {
+      slots = filterSlotsByPreference(slots, preferencia);
+    } else {
+      slots = slots.slice(0, 3);
+    }
+
+    return JSON.stringify({
+      status: 'ok',
+      slots: slots.map(s => ({ id: s.id, etiquetaHablada: s.etiquetaHablada })),
+    });
+  }
+
+  private async handleAgendarCita(args: {
+    slot_id: string;
+    nombre_contacto: string;
+    telefono_confirmacion?: string;
+    email?: string;
+    notas?: string;
+  }): Promise<string> {
+    const slot = this.cachedSlots.find(s => s.id === args.slot_id);
+
+    if (!slot) {
+      if (this.callId) {
+        await db.updateCallRecord(this.callId, {
+          disposition: 'agendo',
+          next_action: `Cita solicitada por ${args.nombre_contacto}`,
+        });
+        await db.updateProspectStatus(this.prospectId, 'agendado');
+      }
+      return JSON.stringify({
+        success: true,
+        etiquetaHablada: '',
+        mensaje: 'Cita registrada. Un vendedor confirmará el horario.',
+      });
+    }
+
+    const conn = this.calendarConnection;
+    const phone = args.telefono_confirmacion || this.prospectPhone || '';
+
+    let googleEventId: string | null = null;
+    let meetUrl: string | null = null;
+    let estado: 'confirmada' | 'tentativa' = 'confirmada';
+
+    if (conn) {
+      try {
+        const nowFreeBusy = await gcal.getFreeBusy(
+          conn,
+          slot.inicioIso,
+          slot.finIso,
+        );
+        if (nowFreeBusy.length > 0) {
+          const alternativas = this.cachedSlots
+            .filter(s => s.id !== slot.id)
+            .slice(0, 2)
+            .map(s => ({ id: s.id, etiquetaHablada: s.etiquetaHablada }));
+
+          return JSON.stringify({
+            success: false,
+            motivo: 'slot_ocupado',
+            alternativas,
+          });
+        }
+      } catch (err) {
+        console.warn('[CallSession] FreeBusy re-check failed, proceeding anyway:', err);
+      }
+
+      try {
+        const vendedorProfile = await db.getSupabaseAdmin()
+          .from('profiles')
+          .select('nombre')
+          .eq('id', conn.owner_id)
+          .single();
+        const vendedorNombre = vendedorProfile.data?.nombre || 'Orkesta';
+
+        const result = await gcal.createEvent(conn, {
+          titulo: `Demo Orkesta — ${args.nombre_contacto}`,
+          descripcion: `Cita agendada por el agente de voz de Orkesta.\nContacto: ${args.nombre_contacto}\n${args.notas || ''}`.trim(),
+          inicio: slot.inicioIso,
+          fin: slot.finIso,
+          timezone: conn.timezone,
+          invitados: args.email ? [args.email] : [],
+        });
+
+        googleEventId = result.eventId;
+        meetUrl = result.meetUrl;
+
+        if (phone) {
+          try {
+            const meetInfo = meetUrl ? `\nLiga de videollamada: ${meetUrl}` : '';
+            const msgBody = `Hola ${args.nombre_contacto}, tu cita con ${vendedorNombre} de Orkesta quedo confirmada ${slot.etiquetaHablada}. Duracion: ${conn.duracion_default_min} minutos.${meetInfo}`;
+
+            const { channel } = await twilio.sendConfirmationMessage({ to: phone, body: msgBody });
+
+            await db.createAppointment({
+              callId: this.callId,
+              prospectId: this.prospectId,
+              vendedorId: conn.owner_id,
+              inicio: slot.inicioIso,
+              fin: slot.finIso,
+              timezone: conn.timezone,
+              googleEventId,
+              meetUrl,
+              estado: 'confirmada',
+              canalConfirmacion: channel,
+              confirmacionEnviadaAt: new Date().toISOString(),
+              notas: args.notas,
+            });
+          } catch (msgErr) {
+            console.warn('[CallSession] Confirmation message failed:', msgErr);
+            await db.createAppointment({
+              callId: this.callId,
+              prospectId: this.prospectId,
+              vendedorId: conn.owner_id,
+              inicio: slot.inicioIso,
+              fin: slot.finIso,
+              timezone: conn.timezone,
+              googleEventId,
+              meetUrl,
+              estado: 'confirmada',
+              canalConfirmacion: 'ninguno',
+              notas: args.notas,
+            });
+          }
+        } else {
+          await db.createAppointment({
+            callId: this.callId,
+            prospectId: this.prospectId,
+            vendedorId: conn.owner_id,
+            inicio: slot.inicioIso,
+            fin: slot.finIso,
+            timezone: conn.timezone,
+            googleEventId,
+            meetUrl,
+            estado: 'confirmada',
+            canalConfirmacion: 'ninguno',
+            notas: args.notas,
+          });
+        }
+      } catch (calErr) {
+        console.error('[CallSession] Google Calendar event creation failed:', calErr);
+        estado = 'tentativa';
+
+        await db.createAppointment({
+          callId: this.callId,
+          prospectId: this.prospectId,
+          vendedorId: conn.owner_id,
+          inicio: slot.inicioIso,
+          fin: slot.finIso,
+          timezone: conn.timezone,
+          estado: 'tentativa',
+          canalConfirmacion: 'ninguno',
+          notas: `${args.notas || ''} [Error creando evento en Google Calendar]`.trim(),
+        });
+      }
+    } else {
+      await db.createAppointment({
+        callId: this.callId,
+        prospectId: this.prospectId,
+        vendedorId: this.ownerId,
+        inicio: slot.inicioIso,
+        fin: slot.finIso,
+        timezone: 'America/Mexico_City',
+        estado: 'tentativa',
+        canalConfirmacion: 'ninguno',
+        notas: args.notas,
+      });
+      estado = 'tentativa';
+    }
+
+    if (this.callId) {
+      await db.updateCallRecord(this.callId, { disposition: 'agendo' });
+      await db.updateProspectStatus(this.prospectId, 'agendado');
+    }
+
+    return JSON.stringify({
+      success: true,
+      etiquetaHablada: slot.etiquetaHablada,
+      meetUrl: meetUrl || undefined,
+      mensaje: estado === 'tentativa'
+        ? 'Cita registrada como tentativa. Un vendedor la confirmará.'
+        : `Cita confirmada ${slot.etiquetaHablada}`,
+    });
   }
 
   async cleanup() {

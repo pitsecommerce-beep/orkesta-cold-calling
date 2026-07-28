@@ -88,6 +88,7 @@ async function checkAuth() {
     loadProspects();
     loadCampaigns();
     loadCalls();
+    loadCalendarStatus();
   } catch {
     logout();
   }
@@ -113,6 +114,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     loadProspects();
     loadCampaigns();
     loadCalls();
+    loadCalendarStatus();
   } catch (err) {
     errEl.textContent = err.message;
   }
@@ -641,6 +643,135 @@ function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ---- Calendar ----
+
+async function loadCalendarStatus() {
+  try {
+    const status = await api('/api/calendar/status');
+    if (status.connected) {
+      document.getElementById('cal-status-disconnected').classList.add('hidden');
+      document.getElementById('cal-status-connected').classList.remove('hidden');
+      document.getElementById('cal-email').textContent = status.google_email || 'Conectado';
+      document.getElementById('cal-active-badge').textContent = status.activo ? 'activo' : 'inactivo';
+      document.getElementById('cal-active-badge').className = 'status-badge ' + (status.activo ? 'status-interesado' : 'status-no_interesado');
+
+      document.getElementById('cal-timezone').value = status.timezone || 'America/Mexico_City';
+      document.getElementById('cal-duracion').value = String(status.duracion_default_min || 20);
+      document.getElementById('cal-inicio').value = status.horario_inicio || '09:00';
+      document.getElementById('cal-fin').value = status.horario_fin || '18:00';
+      document.getElementById('cal-buffer').value = String(status.buffer_min ?? 15);
+
+      const dias = status.dias_habiles || [1,2,3,4,5];
+      document.querySelectorAll('#cal-dias input[type="checkbox"]').forEach(cb => {
+        cb.checked = dias.includes(parseInt(cb.value));
+      });
+
+      loadAppointments();
+    } else {
+      document.getElementById('cal-status-disconnected').classList.remove('hidden');
+      document.getElementById('cal-status-connected').classList.add('hidden');
+    }
+  } catch (err) {
+    console.error('Error loading calendar status:', err);
+  }
+}
+
+document.getElementById('connect-calendar-btn').addEventListener('click', async () => {
+  try {
+    const data = await api('/api/calendar/auth');
+    window.location.href = data.url;
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+document.getElementById('disconnect-calendar-btn').addEventListener('click', async () => {
+  const confirmed = await showConfirm({
+    title: 'Desconectar calendario',
+    message: 'Se revocará el acceso a Google Calendar. Las citas ya creadas no se eliminan.',
+    icon: '',
+    confirmText: 'Desconectar',
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  try {
+    await api('/api/calendar/connection', { method: 'DELETE' });
+    showToast('Calendario desconectado', 'success');
+    loadCalendarStatus();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+document.getElementById('calendar-settings-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const dias = [];
+  document.querySelectorAll('#cal-dias input[type="checkbox"]:checked').forEach(cb => {
+    dias.push(parseInt(cb.value));
+  });
+
+  try {
+    await api('/api/calendar/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        timezone: document.getElementById('cal-timezone').value,
+        horario_inicio: document.getElementById('cal-inicio').value,
+        horario_fin: document.getElementById('cal-fin').value,
+        dias_habiles: dias,
+        duracion_default_min: parseInt(document.getElementById('cal-duracion').value),
+        buffer_min: parseInt(document.getElementById('cal-buffer').value),
+      }),
+    });
+    showToast('Configuración guardada', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function loadAppointments() {
+  try {
+    const appointments = await api('/api/calendar/appointments');
+    renderAppointments(appointments);
+  } catch (err) {
+    console.error('Error loading appointments:', err);
+  }
+}
+
+function renderAppointments(appointments) {
+  const list = document.getElementById('appointments-list');
+  if (appointments.length === 0) {
+    list.innerHTML = '<div class="empty-state"><p>No hay citas próximas</p><p style="font-size:0.9rem">Las citas agendadas por el agente aparecerán aquí</p></div>';
+    return;
+  }
+  list.innerHTML = appointments.map(a => {
+    const date = new Date(a.inicio).toLocaleString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    const prospect = a.prospects;
+    const estadoClass = a.estado === 'confirmada' ? 'status-interesado' : a.estado === 'tentativa' ? 'status-contactado' : 'status-no_interesado';
+    return `
+      <div class="card">
+        <div class="card-info">
+          <h3>${prospect ? esc(prospect.nombre) : 'Sin nombre'} ${prospect?.empresa ? '· ' + esc(prospect.empresa) : ''}</h3>
+          <p>${date}</p>
+        </div>
+        <div class="card-actions">
+          <span class="status-badge ${estadoClass}">${a.estado}</span>
+          ${a.meet_url ? `<a href="${esc(a.meet_url)}" target="_blank" class="btn btn-small" style="text-decoration:none">Meet</a>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Handle OAuth redirect
+if (window.location.search.includes('calendar=connected')) {
+  setTimeout(() => showToast('Google Calendar conectado correctamente', 'success'), 500);
+  window.history.replaceState({}, '', '/');
+} else if (window.location.search.includes('calendar=error')) {
+  setTimeout(() => showToast('Error conectando Google Calendar', 'error'), 500);
+  window.history.replaceState({}, '', '/');
 }
 
 // ---- Init ----

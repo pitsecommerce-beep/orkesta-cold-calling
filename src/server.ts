@@ -9,6 +9,7 @@ import { prospectsRouter } from './routes/prospects';
 import { campaignsRouter } from './routes/campaigns';
 import { callsRouter } from './routes/calls';
 import { twilioRouter } from './routes/twilio-webhooks';
+import { calendarRouter } from './routes/calendar';
 import { handleMediaStream } from './handlers/media-stream';
 import { warmFillerCache } from './services/deepgram-tts';
 
@@ -40,6 +41,7 @@ app.use('/api/prospects', prospectsRouter);
 app.use('/api/campaigns', campaignsRouter);
 app.use('/api/calls', callsRouter);
 app.use('/api/twilio', twilioRouter);
+app.use('/api/calendar', calendarRouter);
 
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'panel', 'public', 'index.html'));
