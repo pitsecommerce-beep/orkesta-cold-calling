@@ -61,6 +61,7 @@
         <button class="tab active" data-tab="prospects">Prospectos</button>
         <button class="tab" data-tab="campaigns">Campañas</button>
         <button class="tab" data-tab="calls">Llamadas</button>
+        <button class="tab" data-tab="calendar">Calendario</button>
       </nav>
 
       <!-- Prospects Tab -->
@@ -91,6 +92,122 @@
           <h2>Historial de llamadas</h2>
         </div>
         <div id="calls-list" class="card-list"></div>
+      </div>
+
+      <!-- Calendar Tab -->
+      <div id="tab-calendar" class="tab-content">
+        <div class="toolbar">
+          <h2>Calendario</h2>
+        </div>
+
+        <div id="calendar-connection" class="card" style="padding:1.5rem">
+          <div id="cal-status-disconnected">
+            <div class="card-info">
+              <h3>Google Calendar</h3>
+              <p>Conecta tu calendario para agendar citas reales durante las llamadas</p>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-primary" id="connect-calendar-btn" style="width:auto">Conectar Google Calendar</button>
+            </div>
+          </div>
+
+          <div id="cal-status-connected" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem">
+              <div>
+                <h3 style="margin-bottom:0.2rem">Google Calendar conectado</h3>
+                <p style="font-size:0.85rem;color:var(--text-secondary)" id="cal-email"></p>
+              </div>
+              <div style="display:flex;gap:0.5rem;align-items:center">
+                <span class="status-badge status-interesado" id="cal-active-badge">activo</span>
+                <button class="btn btn-danger-outline" id="disconnect-calendar-btn">Desconectar</button>
+              </div>
+            </div>
+
+            <form id="calendar-settings-form">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+                <div class="form-group">
+                  <label>Zona horaria</label>
+                  <select id="cal-timezone">
+                    <option value="America/Mexico_City">Ciudad de México</option>
+                    <option value="America/Monterrey">Monterrey</option>
+                    <option value="America/Cancun">Cancún (sin cambio horario)</option>
+                    <option value="America/Tijuana">Tijuana (horario fronterizo)</option>
+                    <option value="America/Hermosillo">Hermosillo (sin cambio horario)</option>
+                    <option value="America/Chihuahua">Chihuahua</option>
+                    <option value="America/Mazatlan">Mazatlán</option>
+                    <option value="America/Merida">Mérida</option>
+                    <option value="America/Bogota">Bogotá</option>
+                    <option value="America/Lima">Lima</option>
+                    <option value="America/Santiago">Santiago</option>
+                    <option value="America/Argentina/Buenos_Aires">Buenos Aires</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Duración de cita (minutos)</label>
+                  <select id="cal-duracion">
+                    <option value="15">15 minutos</option>
+                    <option value="20" selected>20 minutos</option>
+                    <option value="30">30 minutos</option>
+                    <option value="45">45 minutos</option>
+                    <option value="60">60 minutos</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Horario de inicio</label>
+                  <input type="time" id="cal-inicio" value="09:00">
+                </div>
+                <div class="form-group">
+                  <label>Horario de fin</label>
+                  <input type="time" id="cal-fin" value="18:00">
+                </div>
+                <div class="form-group">
+                  <label>Buffer entre citas (minutos)</label>
+                  <select id="cal-buffer">
+                    <option value="0">Sin buffer</option>
+                    <option value="5">5 minutos</option>
+                    <option value="10">10 minutos</option>
+                    <option value="15" selected>15 minutos</option>
+                    <option value="30">30 minutos</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top:0.75rem">
+                <label>Días laborales</label>
+                <div id="cal-dias" style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="1" checked> Lun
+                  </label>
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="2" checked> Mar
+                  </label>
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="3" checked> Mié
+                  </label>
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="4" checked> Jue
+                  </label>
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="5" checked> Vie
+                  </label>
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="6"> Sáb
+                  </label>
+                  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+                    <input type="checkbox" value="7"> Dom
+                  </label>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary" style="width:auto;margin-top:1rem">Guardar configuración</button>
+            </form>
+          </div>
+        </div>
+
+        <div id="appointments-section" style="margin-top:1.5rem">
+          <h3 style="margin-bottom:1rem">Próximas citas</h3>
+          <div id="appointments-list" class="card-list"></div>
+        </div>
       </div>
 
       <!-- Call Detail Modal -->

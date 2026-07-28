@@ -49,6 +49,16 @@ export const config = {
     serviceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
   },
 
+  google: {
+    clientId: optional('GOOGLE_CLIENT_ID'),
+    clientSecret: optional('GOOGLE_CLIENT_SECRET'),
+    redirectUri: optional('GOOGLE_REDIRECT_URI'),
+  },
+
+  encryptionKey: optional('ENCRYPTION_KEY'),
+
+  twilioWhatsappFrom: optional('TWILIO_WHATSAPP_FROM'),
+
   endpointingMs: parseInt(optional('ENDPOINTING_MS', '500'), 10),
   enableFillerPhrases: process.env.ENABLE_FILLER_PHRASES !== 'false',
 };
@@ -57,7 +67,7 @@ export function getMissingVars(): string[] {
   return [...missingVars];
 }
 
-export function isConfigured(service: 'twilio' | 'deepgram' | 'openai' | 'anthropic' | 'supabase'): boolean {
+export function isConfigured(service: 'twilio' | 'deepgram' | 'openai' | 'anthropic' | 'supabase' | 'google' | 'encryption'): boolean {
   switch (service) {
     case 'twilio':
       return !!(config.twilio.accountSid && config.twilio.authToken && config.twilio.phoneNumber);
@@ -69,6 +79,10 @@ export function isConfigured(service: 'twilio' | 'deepgram' | 'openai' | 'anthro
       return !!config.anthropic.apiKey;
     case 'supabase':
       return !!(config.supabase.url && config.supabase.anonKey && config.supabase.serviceRoleKey);
+    case 'google':
+      return !!(config.google.clientId && config.google.clientSecret && config.google.redirectUri);
+    case 'encryption':
+      return !!config.encryptionKey;
   }
 }
 

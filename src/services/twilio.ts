@@ -45,6 +45,36 @@ export async function hangupCall(callSid: string): Promise<void> {
   }
 }
 
+export async function sendConfirmationMessage(params: {
+  to: string;
+  body: string;
+}): Promise<{ channel: string; sid: string }> {
+  const client = getTwilioClient();
+  const whatsappFrom = process.env.TWILIO_WHATSAPP_FROM;
+
+  if (whatsappFrom) {
+    try {
+      const msg = await client.messages.create({
+        from: whatsappFrom,
+        to: `whatsapp:${params.to}`,
+        body: params.body,
+      });
+      console.log(`[Twilio] WhatsApp sent to ${params.to.slice(0, 6)}***: ${msg.sid}`);
+      return { channel: 'whatsapp', sid: msg.sid };
+    } catch (err) {
+      console.warn('[Twilio] WhatsApp failed, falling back to SMS:', err);
+    }
+  }
+
+  const msg = await client.messages.create({
+    from: config.twilio.phoneNumber,
+    to: params.to,
+    body: params.body,
+  });
+  console.log(`[Twilio] SMS sent to ${params.to.slice(0, 6)}***: ${msg.sid}`);
+  return { channel: 'sms', sid: msg.sid };
+}
+
 export function generateStreamTwiml(params: {
   prospectId: string;
   campaignId: string;

@@ -126,3 +126,50 @@ export interface CallSession {
   ttsAbortController: AbortController | null;
   openaiAbortController: AbortController | null;
 }
+
+export type AppointmentStatus = 'tentativa' | 'confirmada' | 'cancelada' | 'no_asistio' | 'realizada';
+
+export interface CalendarConnection {
+  id: string;
+  owner_id: string;
+  provider: 'google';
+  google_email: string | null;
+  calendar_id: string;
+  refresh_token: string;
+  access_token: string | null;
+  token_expires_at: string | null;
+  timezone: string;
+  horario_inicio: string;
+  horario_fin: string;
+  dias_habiles: number[];
+  duracion_default_min: number;
+  buffer_min: number;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Appointment {
+  id: string;
+  call_id: string | null;
+  prospect_id: string | null;
+  vendedor_id: string;
+  inicio: string;
+  fin: string;
+  timezone: string;
+  google_event_id: string | null;
+  meet_url: string | null;
+  estado: AppointmentStatus;
+  canal_confirmacion: string | null;
+  confirmacion_enviada_at: string | null;
+  notas: string | null;
+  created_at: string;
+}
+
+export interface Slot {
+  id: string;
+  inicioIso: string;
+  finIso: string;
+  etiquetaHablada: string;
+  vendedorId: string;
+}
