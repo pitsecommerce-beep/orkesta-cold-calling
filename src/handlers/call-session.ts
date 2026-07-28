@@ -1,19 +1,19 @@
 import WebSocket from 'ws';
 import { DeepgramSTT } from '../services/deepgram-stt';
 import * as tts from '../services/deepgram-tts';
+import { DeepgramTTSStream } from '../services/deepgram-tts';
 import * as llm from '../services/llm';
 import * as db from '../services/supabase';
 import * as twilio from '../services/twilio';
 import * as gcal from '../services/google-calendar';
 import { computeAvailableSlots, filterSlotsByPreference, selectVendedor } from '../services/scheduling';
-import { TurnDetector, TurnCompleteEvent } from '../pipeline/turn-detector';
 import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
+import { MetricsCollector, TurnMetrics } from '../pipeline/turn-metrics';
 import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection } from '../models/types';
 import type { ConversationMessage } from '../services/llm';
-import type { FreeBusyBlock } from '../services/google-calendar';
 
 export class CallSession {
   private twilioWs: WebSocket;
@@ -25,9 +25,10 @@ export class CallSession {
   private callId: string | null = null;
 
   private stt: DeepgramSTT | null = null;
-  private turnDetector: TurnDetector;
+  private ttsStream: DeepgramTTSStream | null = null;
   private phraseChunker: PhraseChunker;
   private playbackQueue: PlaybackQueue;
+  private metrics = new MetricsCollector();
 
   private conversationHistory: ConversationMessage[] = [];
   private turns: ConversationTurn[] = [];
@@ -63,15 +64,8 @@ export class CallSession {
     this.ownerId = params.ownerId;
     this.startTime = new Date();
 
-    this.turnDetector = new TurnDetector();
     this.phraseChunker = new PhraseChunker();
     this.playbackQueue = new PlaybackQueue();
-
-    this.turnDetector.on('turn_complete', (event: TurnCompleteEvent) => {
-      this.handleTurnComplete(event.text).catch((err) =>
-        console.error('[CallSession] Turn complete error:', err),
-      );
-    });
   }
 
   async initialize(streamSid: string, callSid: string) {
@@ -128,6 +122,14 @@ export class CallSession {
       this.conversationHistory.push({ role: 'system', content: systemPrompt });
 
       await this.connectSTT();
+
+      try {
+        this.ttsStream = new DeepgramTTSStream();
+        await this.ttsStream.connect(this.ttsVoice);
+      } catch (err) {
+        console.warn('[CallSession] TTS WebSocket failed, will use REST fallback:', err);
+        this.ttsStream = null;
+      }
 
       await db.updateProspectStatus(this.prospectId, 'contactado');
 
@@ -201,18 +203,15 @@ export class CallSession {
 
   private async connectSTT() {
     this.stt = new DeepgramSTT({
-      onTranscript: (text, isFinal, speechFinal) => {
-        if (this.isAgentSpeaking && isFinal && text.trim().split(/\s+/).length >= 2) {
+      onStartOfTurn: () => {
+        if (this.isAgentSpeaking) {
           this.handleBargeIn();
         }
-        if (!this.isAgentSpeaking) {
-          this.turnDetector.handleTranscript(text, isFinal, speechFinal);
-        }
       },
-      onUtteranceEnd: () => {
-        if (!this.isAgentSpeaking) {
-          this.turnDetector.handleUtteranceEnd();
-        }
+      onTurnEnd: (text) => {
+        this.handleTurnComplete(text).catch((err) =>
+          console.error('[CallSession] Turn complete error:', err),
+        );
       },
       onError: (err) => console.error('[CallSession] STT error:', err),
       onClose: () => {
@@ -268,14 +267,17 @@ export class CallSession {
       this.currentAbort = null;
     }
 
+    this.ttsStream?.clear();
     this.playbackQueue.sendClear();
     this.phraseQueue.length = 0;
     this.phraseChunker.reset();
-    this.turnDetector.reset();
+    this.stt?.resetTurnBuffer();
   }
 
   private async handleTurnComplete(text: string) {
     if (this.disposed || !text.trim()) return;
+
+    const turnM = this.metrics.startTurn();
 
     this.noResponseCount = 0;
     this.resetSilenceTimer();
@@ -299,10 +301,10 @@ export class CallSession {
       }
     }
 
-    await this.processLLMResponse();
+    await this.processLLMResponse(turnM);
   }
 
-  private async processLLMResponse() {
+  private async processLLMResponse(turnM?: TurnMetrics) {
     if (this.disposed || !this.streamSid) return;
 
     if (this.currentAbort) {
@@ -317,6 +319,7 @@ export class CallSession {
 
     let llmDone = false;
     let ttsConsumer: Promise<void> | null = null;
+    let firstChunkOfTurn = true;
 
     try {
       let fullResponse = '';
@@ -328,7 +331,9 @@ export class CallSession {
         while (!signal.aborted) {
           if (this.phraseQueue.length > 0) {
             const phrase = this.phraseQueue.shift()!;
-            await this.speakChunk(phrase, signal);
+            const isFirst = firstChunkOfTurn;
+            firstChunkOfTurn = false;
+            await this.speakChunk(phrase, signal, turnM, isFirst);
           } else if (llmDone) {
             break;
           } else {
@@ -338,11 +343,17 @@ export class CallSession {
       })().catch(err => { ttsError = err; });
 
       const stream = llm.streamCompletion(this.conversationHistory, signal, this.llmModel);
+      let firstToken = true;
 
       for await (const event of stream) {
         if (signal.aborted) break;
 
         if (event.type === 'token' && event.text) {
+          if (firstToken && turnM) {
+            this.metrics.markLlmFirstToken(turnM);
+            firstToken = false;
+          }
+
           fullResponse += event.text;
 
           const chunk = this.phraseChunker.addToken(event.text);
@@ -374,7 +385,7 @@ export class CallSession {
           fullResponse = '';
           this.phraseChunker.reset();
 
-          await this.processLLMResponse();
+          await this.processLLMResponse(turnM);
           return;
         }
 
@@ -397,6 +408,10 @@ export class CallSession {
           timestamp: new Date(),
         });
       }
+
+      if (turnM) {
+        this.metrics.logTurn(turnM);
+      }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       console.error('[CallSession] LLM response error:', err);
@@ -412,23 +427,31 @@ export class CallSession {
     }
   }
 
-  private async speakChunk(text: string, signal: AbortSignal) {
+  private async speakChunk(text: string, signal: AbortSignal, turnM?: TurnMetrics, isFirstChunk = false) {
     if (signal.aborted || !this.streamSid) return;
 
     try {
       this.isAgentSpeaking = true;
-      await tts.synthesizeStream(
-        text,
-        (chunk) => {
-          if (!signal.aborted && this.streamSid) {
-            this.playbackQueue.sendAudio(chunk);
-          }
-        },
-        signal,
-        this.ttsVoice,
-      );
+      let audio: Buffer;
 
-      if (!signal.aborted && this.streamSid) {
+      if (this.ttsStream?.isConnected) {
+        this.ttsStream.speak(text);
+        audio = await this.ttsStream.flush();
+      } else {
+        audio = await tts.synthesize(text, signal, this.ttsVoice);
+      }
+
+      if (signal.aborted || !this.streamSid) return;
+
+      if (isFirstChunk && turnM) {
+        this.metrics.markTtsFirstByte(turnM);
+      }
+
+      if (audio.length > 0) {
+        if (isFirstChunk && turnM) {
+          this.metrics.markTtsPlayStart(turnM);
+        }
+        this.playbackQueue.sendAudio(audio);
         this.playbackQueue.sendMark();
       }
     } catch (err: unknown) {
@@ -735,9 +758,15 @@ export class CallSession {
       this.currentAbort = null;
     }
 
-    this.turnDetector.reset();
     this.playbackQueue.reset();
     this.stt?.close();
+    this.ttsStream?.close();
+    this.ttsStream = null;
+
+    const summary = this.metrics.getSummary();
+    if (summary.count > 0) {
+      console.log(`[Metrics] Call ${this.callSid} summary — p50: ${summary.p50}ms | p95: ${summary.p95}ms | turns: ${summary.count}`);
+    }
 
     const endTime = new Date();
     const durationSeconds = Math.round((endTime.getTime() - this.startTime.getTime()) / 1000);

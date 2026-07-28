@@ -32,6 +32,8 @@ export async function* streamChat(
     model: model || config.openai.model,
     messages: messages as OpenAI.ChatCompletionMessageParam[],
     tools: openaiTools,
+    max_tokens: 120,
+    temperature: 0.7,
     stream: true,
   });
 
