@@ -62,6 +62,12 @@ export const config = {
   endpointingMs: parseInt(optional('ENDPOINTING_MS', '500'), 10),
   enableFillerPhrases: process.env.ENABLE_FILLER_PHRASES !== 'false',
   amdEnabled: process.env.AMD_ENABLED !== 'false',
+
+  silenceNudgeAfterQuestionMs: parseInt(process.env.SILENCE_NUDGE_AFTER_QUESTION_MS || '6000', 10),
+  silenceNudgeAfterStatementMs: parseInt(process.env.SILENCE_NUDGE_AFTER_STATEMENT_MS || '9000', 10),
+  silenceGoodbyeAfterMs: parseInt(process.env.SILENCE_GOODBYE_AFTER_MS || '8000', 10),
+  fillerDelayMs: parseInt(process.env.FILLER_DELAY_MS || '350', 10),
+  fillerMaxPerCall: parseInt(process.env.FILLER_MAX_PER_CALL || '2', 10),
 };
 
 export function getMissingVars(): string[] {

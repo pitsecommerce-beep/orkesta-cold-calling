@@ -11,6 +11,7 @@ import { PhraseChunker } from '../pipeline/phrase-chunker';
 import { PlaybackQueue } from '../pipeline/playback-queue';
 import { MetricsCollector, TurnMetrics } from '../pipeline/turn-metrics';
 import { VoicemailDetector } from '../pipeline/voicemail-detector';
+import { SilenceMonitor } from '../pipeline/silence-monitor';
 import { getAmbientChunk, generateTypingBurst } from '../services/ambient-audio';
 import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection } from '../models/types';
@@ -58,10 +59,11 @@ export class CallSession {
   private ambientOffset = 0;
   private phraseQueue: string[] = [];
   private responseGeneration = 0;
-  private silenceTimer: NodeJS.Timeout | null = null;
-  private noResponseCount = 0;
-  private static readonly SILENCE_TIMEOUT_MS = 15000;
-  private static readonly MAX_NO_RESPONSE = 2;
+  private silenceMonitor: SilenceMonitor | null = null;
+  private fillerCount = 0;
+  private lastFillerUsed: string | undefined;
+  private fillerTimer: NodeJS.Timeout | null = null;
+  private pendingGoodbye = false;
 
   constructor(ws: WebSocket, params: { prospectId: string; campaignId: string; ownerId: string }) {
     this.twilioWs = ws;
@@ -182,33 +184,46 @@ export class CallSession {
     }
   }
 
-  private resetSilenceTimer() {
-    if (this.silenceTimer) clearTimeout(this.silenceTimer);
-    this.silenceTimer = setTimeout(() => {
-      this.handleSilenceTimeout();
-    }, CallSession.SILENCE_TIMEOUT_MS);
+  private initSilenceMonitor() {
+    this.silenceMonitor = new SilenceMonitor(
+      {
+        canFire: () => !this.isAgentSpeaking && !this.processingResponse && !this.playbackQueue.isPlaying,
+        onNudge: () => {
+          const nudge = tts.getRandomNudge();
+          if (!nudge) return;
+          console.log(`[CallSession] Silence nudge: "${nudge.text}"`);
+          this.isAgentSpeaking = true;
+          this.stopAmbientAudio();
+          this.playbackQueue.sendAudio(nudge.audio);
+          this.playbackQueue.sendMark(nudge.text);
+        },
+        onGoodbye: () => {
+          const audio = tts.getGoodbyeAudio();
+          if (!audio) {
+            this.finalizeGoodbye();
+            return;
+          }
+          console.log('[CallSession] Silence goodbye — playing farewell');
+          this.isAgentSpeaking = true;
+          this.stopAmbientAudio();
+          this.pendingGoodbye = true;
+          this.playbackQueue.sendAudio(audio);
+          this.playbackQueue.sendMark();
+        },
+      },
+      {
+        nudgeAfterQuestionMs: config.silenceNudgeAfterQuestionMs,
+        nudgeAfterStatementMs: config.silenceNudgeAfterStatementMs,
+        goodbyeAfterMs: config.silenceGoodbyeAfterMs,
+      },
+    );
   }
 
-  private async handleSilenceTimeout() {
-    if (this.disposed) return;
-    this.noResponseCount++;
-
-    if (this.noResponseCount >= CallSession.MAX_NO_RESPONSE) {
-      console.log(`[CallSession] No response after ${this.noResponseCount} attempts — hanging up`);
-      if (this.callId) {
-        await db.updateCallRecord(this.callId, { disposition: 'sin_decision' });
-      }
-      await this.hangup();
-      return;
+  private async finalizeGoodbye() {
+    if (this.callId) {
+      await db.updateCallRecord(this.callId, { disposition: 'sin_decision' });
     }
-
-    console.log(`[CallSession] No response — attempt ${this.noResponseCount}`);
-    this.conversationHistory.push({
-      role: 'user',
-      content: '[Silencio prolongado — el prospecto no ha respondido. Di "¿Hola? ¿Me escucha?" brevemente.]',
-    });
-    await this.processLLMResponse();
-    this.resetSilenceTimer();
+    await this.hangup();
   }
 
   private async hangup() {
@@ -220,6 +235,7 @@ export class CallSession {
   private async connectSTT() {
     this.stt = new DeepgramSTT({
       onStartOfTurn: () => {
+        this.silenceMonitor?.disarm();
         if (this.isAgentSpeaking) {
           this.handleBargeIn();
         }
@@ -228,6 +244,9 @@ export class CallSession {
         this.handleTurnComplete(text).catch((err) =>
           console.error('[CallSession] Turn complete error:', err),
         );
+      },
+      onProspectActivity: () => {
+        this.silenceMonitor?.prospectActivity();
       },
       onError: (err) => console.error('[CallSession] STT error:', err),
       onClose: () => {
@@ -249,13 +268,14 @@ export class CallSession {
     if (this.greetingSent || this.disposed) return;
     this.greetingSent = true;
 
+    this.initSilenceMonitor();
+
     this.conversationHistory.push({
       role: 'user',
       content: '[El prospecto contestó la llamada. Salúdalo y preséntate brevemente.]',
     });
 
     await this.processLLMResponse();
-    this.resetSilenceTimer();
   }
 
   onAmdVerdict(answeredBy: string) {
@@ -301,6 +321,19 @@ export class CallSession {
     this.playbackQueue.handleMarkReceived(markName);
     if (!this.playbackQueue.isPlaying) {
       this.isAgentSpeaking = false;
+
+      if (this.pendingGoodbye) {
+        this.pendingGoodbye = false;
+        this.finalizeGoodbye();
+        return;
+      }
+
+      if (!this.processingResponse && this.silenceMonitor) {
+        const lastMsg = this.conversationHistory.filter(m => m.role === 'assistant').pop();
+        const endsWithQuestion = !!lastMsg?.content?.trimEnd().endsWith('?');
+        this.silenceMonitor.arm(endsWithQuestion);
+      }
+
       if (!this.processingResponse) {
         this.startAmbientAudio();
       }
@@ -309,6 +342,13 @@ export class CallSession {
 
   private handleBargeIn() {
     console.log('[CallSession] Barge-in detected');
+
+    const spokenText = this.playbackQueue.getConfirmedText();
+    if (spokenText) {
+      this.conversationHistory.push({ role: 'assistant', content: spokenText + ' —' });
+      this.turns.push({ speaker: 'agente', text: spokenText + ' —', timestamp: new Date() });
+    }
+
     this.isAgentSpeaking = false;
 
     if (this.currentAbort) {
@@ -318,9 +358,15 @@ export class CallSession {
 
     this.ttsStream?.clear();
     this.playbackQueue.sendClear();
+    this.playbackQueue.resetTracking();
     this.phraseQueue.length = 0;
     this.phraseChunker.reset();
     this.stt?.resetTurnBuffer();
+
+    if (this.fillerTimer) {
+      clearTimeout(this.fillerTimer);
+      this.fillerTimer = null;
+    }
   }
 
   private async handleTurnComplete(text: string) {
@@ -336,10 +382,9 @@ export class CallSession {
       return;
     }
 
-    const turnM = this.metrics.startTurn();
+    this.silenceMonitor?.disarm();
 
-    this.noResponseCount = 0;
-    this.resetSilenceTimer();
+    const turnM = this.metrics.startTurn();
 
     console.log(`[CallSession] Prospect said: "${text}"`);
 
@@ -351,20 +396,36 @@ export class CallSession {
 
     this.conversationHistory.push({ role: 'user', content: text });
 
-    if (config.enableFillerPhrases && this.streamSid) {
-      const filler = tts.getRandomFiller();
-      if (filler) {
-        this.playbackQueue.sendAudio(filler.audio);
-        this.playbackQueue.sendMark();
-        this.isAgentSpeaking = true;
-      }
-    }
+    this.scheduleConditionalFiller();
 
     await this.processLLMResponse(turnM);
   }
 
+  private scheduleConditionalFiller() {
+    if (!config.enableFillerPhrases || !this.streamSid) return;
+    if (this.fillerCount >= config.fillerMaxPerCall) return;
+
+    this.fillerTimer = setTimeout(() => {
+      this.fillerTimer = null;
+      if (this.disposed || this.isAgentSpeaking || this.playbackQueue.isPlaying) return;
+      if (this.fillerCount >= config.fillerMaxPerCall) return;
+
+      const filler = tts.getRandomFiller(this.lastFillerUsed);
+      if (!filler) return;
+
+      this.fillerCount++;
+      this.lastFillerUsed = filler.text;
+      this.isAgentSpeaking = true;
+      this.stopAmbientAudio();
+      this.playbackQueue.sendAudio(filler.audio);
+      this.playbackQueue.sendMark(filler.text);
+    }, config.fillerDelayMs);
+  }
+
   private async processLLMResponse(turnM?: TurnMetrics) {
     if (this.disposed || !this.streamSid) return;
+
+    this.silenceMonitor?.disarm();
 
     if (this.currentAbort) {
       this.currentAbort.abort();
@@ -373,6 +434,7 @@ export class CallSession {
     const generation = ++this.responseGeneration;
     this.processingResponse = true;
     this.stopAmbientAudio();
+    this.playbackQueue.resetTracking();
     this.currentAbort = new AbortController();
     const signal = this.currentAbort.signal;
 
@@ -408,9 +470,13 @@ export class CallSession {
         if (signal.aborted) break;
 
         if (event.type === 'token' && event.text) {
-          if (firstToken && turnM) {
-            this.metrics.markLlmFirstToken(turnM);
+          if (firstToken) {
+            if (turnM) this.metrics.markLlmFirstToken(turnM);
             firstToken = false;
+            if (this.fillerTimer) {
+              clearTimeout(this.fillerTimer);
+              this.fillerTimer = null;
+            }
           }
 
           fullResponse += event.text;
@@ -511,7 +577,7 @@ export class CallSession {
           this.metrics.markTtsPlayStart(turnM);
         }
         this.playbackQueue.sendAudio(audio);
-        this.playbackQueue.sendMark();
+        this.playbackQueue.sendMark(text);
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -807,9 +873,11 @@ export class CallSession {
     console.log(`[CallSession] Cleaning up call ${this.callSid}`);
 
     this.stopAmbientAudio();
-    if (this.silenceTimer) {
-      clearTimeout(this.silenceTimer);
-      this.silenceTimer = null;
+    this.silenceMonitor?.dispose();
+    this.silenceMonitor = null;
+    if (this.fillerTimer) {
+      clearTimeout(this.fillerTimer);
+      this.fillerTimer = null;
     }
     if (this.amdTimeout) {
       clearTimeout(this.amdTimeout);
