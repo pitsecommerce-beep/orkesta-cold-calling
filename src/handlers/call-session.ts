@@ -415,6 +415,7 @@ export class CallSession {
 
       this.fillerCount++;
       this.lastFillerUsed = filler.text;
+      console.log(`[CallSession] Filler played: "${filler.text}" (${this.fillerCount}/${config.fillerMaxPerCall})`);
       this.isAgentSpeaking = true;
       this.stopAmbientAudio();
       this.playbackQueue.sendAudio(filler.audio);
