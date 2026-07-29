@@ -17,6 +17,28 @@ import { config } from '../config';
 import type { ConversationTurn, CallDisposition, ProspectStatus, Slot, CalendarConnection, Campaign } from '../models/types';
 import type { ConversationMessage } from '../services/llm';
 
+const TRIVIAL_ACUSES = new Set([
+  'si', 'no', 'aja', 'bueno', 'mande', 'sale', 'orale', 'claro', 'ok', 'okey',
+  'digame', 'que paso', 'hola', 'alo', 'diga', 'va', 'simon', 'nel', 'ya',
+]);
+
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[¿?¡!.,;:…]/g, '')
+    .trim();
+}
+
+function isTrivialTurn(text: string): boolean {
+  const cleaned = normalize(text);
+  if (cleaned.split(/\s+/).length <= 2) {
+    return TRIVIAL_ACUSES.has(cleaned) || cleaned.split(/\s+/).every(w => TRIVIAL_ACUSES.has(w));
+  }
+  return false;
+}
+
 export class CallSession {
   private twilioWs: WebSocket;
   private streamSid: string | null = null;
@@ -38,6 +60,7 @@ export class CallSession {
   private currentAbort: AbortController | null = null;
   private startTime: Date;
   private greetingSent = false;
+  private greetingDone = false;
   private disposed = false;
   private ttsVoice: string | undefined;
   private llmModel: string | undefined;
@@ -69,6 +92,10 @@ export class CallSession {
   private testProspectName = '';
   private onTranscript?: (speaker: 'agente' | 'prospecto', text: string) => void;
 
+  private pendingProspectTurn: string | null = null;
+  private prospectTurnCount = 0;
+  private initializeTs = 0;
+
   constructor(ws: WebSocket, params: { prospectId: string; campaignId: string; ownerId: string }) {
     this.twilioWs = ws;
     this.prospectId = params.prospectId;
@@ -89,6 +116,7 @@ export class CallSession {
   async initialize(streamSid: string, callSid: string) {
     this.streamSid = streamSid;
     this.callSid = callSid;
+    this.initializeTs = Date.now();
     this.playbackQueue.setTarget(this.twilioWs, streamSid);
 
     console.log(`[CallSession] Initializing ${this.testMode ? 'test ' : ''}call ${callSid}`);
@@ -346,7 +374,7 @@ export class CallSession {
       content: '[El prospecto contestó la llamada. Salúdalo y preséntate brevemente.]',
     });
 
-    await this.processLLMResponse();
+    await this.processLLMResponse(undefined, true);
   }
 
   onAmdVerdict(answeredBy: string) {
@@ -405,6 +433,14 @@ export class CallSession {
         return;
       }
 
+      if (!this.greetingDone && this.greetingSent && !this.processingResponse) {
+        this.greetingDone = true;
+        this.metrics.timeToFirstWord = this.initializeTs > 0
+          ? Date.now() - this.initializeTs
+          : 0;
+        this.processPendingProspectTurn();
+      }
+
       if (!this.processingResponse && this.silenceMonitor) {
         const lastMsg = this.conversationHistory.filter(m => m.role === 'assistant').pop();
         const endsWithQuestion = !!lastMsg?.content?.trimEnd().endsWith('?');
@@ -414,6 +450,17 @@ export class CallSession {
       if (!this.processingResponse) {
         this.startAmbientAudio();
       }
+    }
+  }
+
+  private processPendingProspectTurn() {
+    if (this.pendingProspectTurn) {
+      const text = this.pendingProspectTurn;
+      this.pendingProspectTurn = null;
+      console.log(`[CallSession] Processing deferred prospect turn: "${text}"`);
+      this.handleTurnComplete(text).catch((err) =>
+        console.error('[CallSession] Deferred turn error:', err),
+      );
     }
   }
 
@@ -448,6 +495,12 @@ export class CallSession {
   private async handleTurnComplete(text: string) {
     if (this.disposed || !text.trim()) return;
 
+    if (!this.greetingDone) {
+      console.log(`[CallSession] Prospect spoke before greeting done, deferring: "${text}"`);
+      this.pendingProspectTurn = text;
+      return;
+    }
+
     if (this.voicemailDetector.check(text)) {
       console.log(`[CallSession] Voicemail detected by local patterns: "${text}"`);
       this.skipReport = true;
@@ -460,6 +513,7 @@ export class CallSession {
 
     this.silenceMonitor?.disarm();
 
+    this.prospectTurnCount++;
     const turnM = this.metrics.startTurn();
 
     console.log(`[CallSession] Prospect said: "${text}"`);
@@ -473,14 +527,17 @@ export class CallSession {
     this.conversationHistory.push({ role: 'user', content: text });
     this.onTranscript?.('prospecto', text);
 
-    this.scheduleConditionalFiller();
+    this.scheduleConditionalFiller(text);
 
     await this.processLLMResponse(turnM);
   }
 
-  private scheduleConditionalFiller() {
+  private scheduleConditionalFiller(prospectText?: string) {
     if (!config.enableFillerPhrases || !this.streamSid) return;
     if (this.fillerCount >= config.fillerMaxPerCall) return;
+    if (!this.greetingDone) return;
+    if (this.prospectTurnCount <= 1) return;
+    if (prospectText && isTrivialTurn(prospectText)) return;
 
     this.fillerTimer = setTimeout(() => {
       this.fillerTimer = null;
@@ -500,12 +557,12 @@ export class CallSession {
     }, config.fillerDelayMs);
   }
 
-  private async processLLMResponse(turnM?: TurnMetrics) {
+  private async processLLMResponse(turnM?: TurnMetrics, isGreeting = false) {
     if (this.disposed || !this.streamSid) return;
 
     this.silenceMonitor?.disarm();
 
-    if (this.currentAbort) {
+    if (!isGreeting && this.currentAbort) {
       this.currentAbort.abort();
     }
 
@@ -540,6 +597,8 @@ export class CallSession {
           }
         }
       })().catch(err => { ttsError = err; });
+
+      if (turnM) this.metrics.markLlmRequest(turnM);
 
       const stream = llm.streamCompletion(this.conversationHistory, signal, this.llmModel);
       let firstToken = true;
@@ -593,6 +652,11 @@ export class CallSession {
         }
 
         if (event.type === 'done') {
+          if (event.truncated && turnM) {
+            const words = fullResponse.trim().split(/\s+/);
+            const lastWords = words.slice(-20).join(' ');
+            this.metrics.markTruncated(turnM, lastWords);
+          }
           const remaining = this.phraseChunker.flush();
           if (remaining) this.phraseQueue.push(remaining);
         }
@@ -638,6 +702,10 @@ export class CallSession {
       this.isAgentSpeaking = true;
       let audio: Buffer;
 
+      if (isFirstChunk && turnM) {
+        this.metrics.markTtsChunkSent(turnM);
+      }
+
       if (this.ttsStream?.isConnected) {
         this.ttsStream.speak(text);
         audio = await this.ttsStream.flush();
@@ -652,10 +720,10 @@ export class CallSession {
       }
 
       if (audio.length > 0) {
+        this.playbackQueue.sendAudio(audio);
         if (isFirstChunk && turnM) {
           this.metrics.markTtsPlayStart(turnM);
         }
-        this.playbackQueue.sendAudio(audio);
         this.playbackQueue.sendMark(text);
       }
     } catch (err: unknown) {
@@ -987,12 +1055,13 @@ export class CallSession {
     this.ttsStream = null;
 
     const summary = this.metrics.getSummary();
-    if (summary.count > 0) {
-      console.log(`[Metrics] Call ${this.callSid} summary — p50: ${summary.p50}ms | p95: ${summary.p95}ms | turns: ${summary.count}`);
+    if (summary.count > 0 || summary.timeToFirstWord > 0) {
+      console.log(`[Metrics] Call ${this.callSid} summary — p50: ${summary.p50}ms | p95: ${summary.p95}ms | turns: ${summary.count} | truncated: ${summary.truncatedCount} | timeToFirstWord: ${summary.timeToFirstWord}ms`);
     }
 
     const endTime = new Date();
     const durationSeconds = Math.round((endTime.getTime() - this.startTime.getTime()) / 1000);
+    const prospectMessages = this.turns.filter(t => t.speaker === 'prospecto').length;
 
     if (this.callId) {
       try {
@@ -1017,6 +1086,6 @@ export class CallSession {
       }
     }
 
-    console.log(`[CallSession] Call ${this.callSid} ended — duration: ${durationSeconds}s, turns: ${this.turns.length}`);
+    console.log(`[CallSession] Call ${this.callSid} ended — duration: ${durationSeconds}s, prospectTurns: ${prospectMessages}, messages: ${this.turns.length}`);
   }
 }

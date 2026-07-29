@@ -9,6 +9,7 @@ export interface StreamEvent {
   toolName?: string;
   toolArgs?: string;
   toolCallId?: string;
+  truncated?: boolean;
 }
 
 export interface ToolCall {

@@ -30,9 +30,35 @@ const nudgeCache = new Map<string, Buffer>();
 let goodbyeAudio: Buffer | null = null;
 let apologyAudio: Buffer | null = null;
 
+let cacheHealthy = true;
+let cacheMissingEssential: string[] = [];
+
+export function getCacheHealth(): { healthy: boolean; missing: string[] } {
+  return { healthy: cacheHealthy, missing: cacheMissingEssential };
+}
+
+async function synthesizeWithRetry(text: string, maxRetries = 3): Promise<Buffer> {
+  const backoffs = [500, 1500, 4000];
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await synthesize(text);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries) {
+        const delay = backoffs[attempt] ?? 4000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError!;
+}
+
 export async function warmFillerCache(): Promise<void> {
   if (!isConfigured('deepgram')) {
-    console.warn('[TTS] ⚠️  DEEPGRAM_API_KEY no configurada — fillers deshabilitados');
+    console.warn('[TTS] DEEPGRAM_API_KEY no configurada — fillers deshabilitados');
     return;
   }
   console.log('[TTS] Warming filler + nudge + goodbye cache...');
@@ -42,29 +68,48 @@ export async function warmFillerCache(): Promise<void> {
     ...NUDGE_PHRASES.map(phrase => ({ phrase, target: nudgeCache })),
   ];
 
-  const promises = all.map(async ({ phrase, target }) => {
-    try {
-      const audio = await synthesize(phrase);
-      target.set(phrase, audio);
-    } catch (err) {
-      console.error(`[TTS] Failed to cache "${phrase}":`, err);
+  const BATCH_SIZE = 4;
+  const BATCH_DELAY_MS = 250;
+
+  for (let i = 0; i < all.length; i += BATCH_SIZE) {
+    const batch = all.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async ({ phrase, target }) => {
+      try {
+        const audio = await synthesizeWithRetry(phrase);
+        target.set(phrase, audio);
+      } catch (err) {
+        console.error(`[TTS] Failed to cache "${phrase}" after retries:`, err);
+      }
+    }));
+    if (i + BATCH_SIZE < all.length) {
+      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
     }
-  });
+  }
 
-  promises.push(
-    synthesize(GOODBYE_PHRASE)
-      .then(audio => { goodbyeAudio = audio; })
-      .catch(err => console.error('[TTS] Failed to cache goodbye:', err)),
-  );
+  const essentials: Array<{ label: string; phrase: string; setter: (audio: Buffer) => void }> = [
+    { label: 'goodbye', phrase: GOODBYE_PHRASE, setter: (a) => { goodbyeAudio = a; } },
+    { label: 'apology', phrase: APOLOGY_PHRASE, setter: (a) => { apologyAudio = a; } },
+  ];
 
-  promises.push(
-    synthesize(APOLOGY_PHRASE)
-      .then(audio => { apologyAudio = audio; })
-      .catch(err => console.error('[TTS] Failed to cache apology:', err)),
-  );
+  for (const { label, phrase, setter } of essentials) {
+    try {
+      const audio = await synthesizeWithRetry(phrase);
+      setter(audio);
+    } catch (err) {
+      console.error(`[TTS] CRITICAL: Failed to cache ${label} after retries:`, err);
+    }
+  }
 
-  await Promise.all(promises);
-  console.log(`[TTS] Cache warmed — fillers: ${fillerCache.size}/${FILLER_PHRASES.length}, nudges: ${nudgeCache.size}/${NUDGE_PHRASES.length}, goodbye: ${goodbyeAudio ? 'ok' : 'fail'}, apology: ${apologyAudio ? 'ok' : 'fail'}`);
+  cacheMissingEssential = [];
+  if (!goodbyeAudio) cacheMissingEssential.push('goodbye');
+  if (!apologyAudio) cacheMissingEssential.push('apology');
+  cacheHealthy = cacheMissingEssential.length === 0;
+
+  if (!cacheHealthy) {
+    console.error(`[TTS] CRITICAL: Essential audio missing: ${cacheMissingEssential.join(', ')}`);
+  }
+
+  console.log(`[TTS] Cache warmed — fillers: ${fillerCache.size}/${FILLER_PHRASES.length}, nudges: ${nudgeCache.size}/${NUDGE_PHRASES.length}, goodbye: ${goodbyeAudio ? 'ok' : 'MISSING'}, apology: ${apologyAudio ? 'ok' : 'MISSING'}`);
 }
 
 export function getRandomFiller(exclude?: string): { text: string; audio: Buffer } | null {

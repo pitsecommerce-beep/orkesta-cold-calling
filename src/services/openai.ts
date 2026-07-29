@@ -32,7 +32,7 @@ export async function* streamChat(
     model: model || config.openai.model,
     messages: messages as OpenAI.ChatCompletionMessageParam[],
     tools: openaiTools,
-    max_tokens: 120,
+    max_tokens: 200,
     temperature: 0.7,
     stream: true,
   });
@@ -71,7 +71,8 @@ export async function* streamChat(
       }
     }
 
-    if (chunk.choices[0]?.finish_reason) {
+    const finishReason = chunk.choices[0]?.finish_reason;
+    if (finishReason) {
       if (currentToolCall) {
         yield {
           type: 'tool_call',
@@ -81,7 +82,7 @@ export async function* streamChat(
         };
         currentToolCall = null;
       }
-      yield { type: 'done' };
+      yield { type: 'done', truncated: finishReason === 'length' };
     }
   }
 }
