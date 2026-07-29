@@ -190,7 +190,7 @@ export class CallSession {
   }
 
   private startAmbientAudio() {
-    if (this.ambientInterval) return;
+    if (this.ambientInterval || this.testMode) return;
     this.ambientInterval = setInterval(() => {
       if (this.disposed || !this.streamSid || this.isAgentSpeaking || this.processingResponse) return;
       if (this.twilioWs.readyState !== WebSocket.OPEN) return;

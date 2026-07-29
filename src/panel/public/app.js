@@ -783,6 +783,9 @@ let testCallSourceNode = null;
 let testCallAudioQueue = [];
 let testCallActiveSources = [];
 let testCallPlaybackTime = 0;
+let testCallIsPlayingBack = false;
+let testCallPendingMarks = new Set();
+let testCallEchoTimeout = null;
 let testCallTimerInterval = null;
 let testCallStartTime = null;
 let testCallActive = false;
@@ -882,6 +885,10 @@ function startTestCallAudioCapture() {
 
   testCallProcessor.onaudioprocess = (e) => {
     if (!testCallActive || !testCallWs || testCallWs.readyState !== WebSocket.OPEN) return;
+    if (testCallIsPlayingBack) {
+      e.outputBuffer.getChannelData(0).fill(0);
+      return;
+    }
 
     const input = e.inputBuffer.getChannelData(0);
     e.outputBuffer.getChannelData(0).fill(0);
@@ -941,6 +948,10 @@ function scheduleTestCallPlayback(markName) {
     return;
   }
 
+  testCallIsPlayingBack = true;
+  testCallPendingMarks.add(markName);
+  if (testCallEchoTimeout) { clearTimeout(testCallEchoTimeout); testCallEchoTimeout = null; }
+
   let totalLen = 0;
   for (const chunk of testCallAudioQueue) totalLen += chunk.length;
   const allMulaw = new Uint8Array(totalLen);
@@ -974,6 +985,14 @@ function scheduleTestCallPlayback(markName) {
     if (testCallWs && testCallWs.readyState === WebSocket.OPEN) {
       testCallWs.send(JSON.stringify({ event: 'mark', mark: { name: markName } }));
     }
+    testCallPendingMarks.delete(markName);
+    if (testCallPendingMarks.size === 0) {
+      if (testCallEchoTimeout) clearTimeout(testCallEchoTimeout);
+      testCallEchoTimeout = setTimeout(() => {
+        testCallIsPlayingBack = false;
+        testCallEchoTimeout = null;
+      }, 300);
+    }
   };
 
   testCallActiveSources.push(source);
@@ -987,6 +1006,9 @@ function clearTestCallPlayback() {
   testCallActiveSources = [];
   testCallAudioQueue = [];
   testCallPlaybackTime = 0;
+  testCallPendingMarks.clear();
+  testCallIsPlayingBack = false;
+  if (testCallEchoTimeout) { clearTimeout(testCallEchoTimeout); testCallEchoTimeout = null; }
 }
 
 function addTestCallTranscript(speaker, text) {
