@@ -12,7 +12,7 @@ import { twilioRouter } from './routes/twilio-webhooks';
 import { calendarRouter } from './routes/calendar';
 import { handleMediaStream } from './handlers/media-stream';
 import { handleTestCall } from './handlers/test-call';
-import { warmFillerCache } from './services/deepgram-tts';
+import { warmFillerCache, getCacheHealth } from './services/deepgram-tts';
 
 const app = express();
 
@@ -24,8 +24,10 @@ app.use(express.static(path.join(__dirname, 'panel', 'public')));
 
 app.get('/health', (_req, res) => {
   const missing = getMissingVars();
+  const ttsCache = getCacheHealth();
+  const status = missing.length > 0 || !ttsCache.healthy ? 'degraded' : 'ok';
   res.json({
-    status: missing.length === 0 ? 'ok' : 'degraded',
+    status,
     timestamp: new Date().toISOString(),
     services: {
       twilio: isConfigured('twilio'),
@@ -33,6 +35,10 @@ app.get('/health', (_req, res) => {
       openai: isConfigured('openai'),
       supabase: isConfigured('supabase'),
       google_calendar: isConfigured('google'),
+    },
+    ttsCache: {
+      healthy: ttsCache.healthy,
+      missingEssential: ttsCache.missing.length > 0 ? ttsCache.missing : undefined,
     },
     missingEnvVars: missing.length > 0 ? missing : undefined,
   });

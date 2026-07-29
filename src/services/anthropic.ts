@@ -100,7 +100,7 @@ export async function* streamChat(
 
   const stream = await client.messages.create({
     model: model || config.anthropic.model,
-    max_tokens: 120,
+    max_tokens: 200,
     system,
     messages: anthropicMessages,
     tools: anthropicTools,
@@ -110,6 +110,7 @@ export async function* streamChat(
   let currentToolId = '';
   let currentToolName = '';
   let currentToolArgs = '';
+  let stopReason = '';
 
   for await (const event of stream) {
     if (signal?.aborted) break;
@@ -142,8 +143,15 @@ export async function* streamChat(
       currentToolArgs = '';
     }
 
+    if (event.type === 'message_delta') {
+      const delta = event.delta as { stop_reason?: string };
+      if (delta.stop_reason) {
+        stopReason = delta.stop_reason;
+      }
+    }
+
     if (event.type === 'message_stop') {
-      yield { type: 'done' };
+      yield { type: 'done', truncated: stopReason === 'max_tokens' };
     }
   }
 }

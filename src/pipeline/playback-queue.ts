@@ -2,10 +2,12 @@ import WebSocket from 'ws';
 
 const FRAME_SIZE = 160; // 20ms of 8kHz mu-law audio
 const FRAME_INTERVAL_MS = 20;
+const MARK_EXPIRY_MS = 30_000;
 
 export class PlaybackQueue {
   private markCounter = 0;
   private pendingMarks = new Set<string>();
+  private markTimers = new Map<string, NodeJS.Timeout>();
   private frameQueue: Array<{ type: 'audio'; payload: string } | { type: 'mark'; name: string }> = [];
   private draining = false;
   private drainId = 0;
@@ -38,6 +40,18 @@ export class PlaybackQueue {
     if (text) {
       this.markTexts.set(markName, text);
     }
+
+    const timer = setTimeout(() => {
+      if (this.pendingMarks.has(markName)) {
+        this.pendingMarks.delete(markName);
+        this.markTexts.delete(markName);
+        this.markTimers.delete(markName);
+        console.warn(`[PlaybackQueue] Mark ${markName} expired after ${MARK_EXPIRY_MS / 1000}s without ack`);
+      }
+    }, MARK_EXPIRY_MS);
+    timer.unref();
+    this.markTimers.set(markName, timer);
+
     this.frameQueue.push({ type: 'mark', name: markName });
     this.startDrain();
     return markName;
@@ -45,6 +59,11 @@ export class PlaybackQueue {
 
   handleMarkReceived(markName: string) {
     this.pendingMarks.delete(markName);
+    const timer = this.markTimers.get(markName);
+    if (timer) {
+      clearTimeout(timer);
+      this.markTimers.delete(markName);
+    }
     const text = this.markTexts.get(markName);
     if (text) {
       this.confirmedTexts.push(text);
@@ -70,6 +89,7 @@ export class PlaybackQueue {
     }
     this.pendingMarks.clear();
     this.markTexts.clear();
+    this.clearAllMarkTimers();
   }
 
   reset() {
@@ -79,6 +99,14 @@ export class PlaybackQueue {
     this.drainId++;
     this.markTexts.clear();
     this.confirmedTexts = [];
+    this.clearAllMarkTimers();
+  }
+
+  private clearAllMarkTimers() {
+    for (const timer of this.markTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.markTimers.clear();
   }
 
   private startDrain() {
